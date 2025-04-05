@@ -13,16 +13,16 @@
 
 namespace em::Gpu
 {
-    TransferBuffer::TransferBuffer(Device &device, const Params &params)
+    TransferBuffer::TransferBuffer(Device &device, std::uint32_t size, Usage usage)
         : TransferBuffer() // Ensure cleanup on throw.
     {
         state.device = device.Handle(); // Assign this first in case we need to throw below, the destructor needs this value.
-        state.size = params.size;
-        state.usage = params.usage;
+        state.size = size;
+        state.usage = usage;
 
         SDL_GPUTransferBufferCreateInfo sdl_params{
-            .usage = params.usage == Usage::download ? SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD : SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-            .size = params.size,
+            .usage = usage == Usage::download ? SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD : SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = size,
             .props = 0, // We don't expose this for now.
         };
 
@@ -32,7 +32,7 @@ namespace em::Gpu
     }
 
     TransferBuffer::TransferBuffer(Device &device, std::span<const unsigned char> data)
-        : TransferBuffer(device, {.size = std::uint32_t(data.size())})
+        : TransferBuffer(device, std::uint32_t(data.size()))
     {
         LoadFromMemory(data.data());
     }

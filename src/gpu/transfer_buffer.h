@@ -43,14 +43,7 @@ namespace em::Gpu
       public:
         constexpr TransferBuffer() {}
 
-        struct Params
-        {
-            Usage usage = Usage::upload;
-
-            std::uint32_t size = 0;
-        };
-
-        TransferBuffer(Device &device, const Params &params);
+        TransferBuffer(Device &device, std::uint32_t size, Usage usage = Usage::upload);
 
         // A helper constructor that fills this entirely from memory.
         TransferBuffer(Device &device, std::span<const unsigned char> data);

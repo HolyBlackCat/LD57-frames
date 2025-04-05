@@ -1,6 +1,8 @@
 #include "em/macros/utils/finally.h"
 #include "em/macros/utils/lift.h"
 #include "em/refl/macros/structs.h"
+#include "game/metronome.h"
+#include "game/world.h"
 #include "gpu/buffer.h"
 #include "gpu/command_buffer.h"
 #include "gpu/copy_pass.h"
@@ -18,6 +20,9 @@
 
 #include "stb_image.h"
 
+#include <SDL3/SDL_timer.h>
+
+#include <cstddef>
 #include <iostream>
 #include <memory>
 
@@ -68,6 +73,20 @@ struct ShaderPair
     }
 };
 
+
+struct VertexAttr
+{
+    fvec2 pos;
+    fvec4 color;
+    fvec2 texcoord;
+    fvec3 factors;
+};
+
+
+struct GameApp;
+GameApp *global_app = nullptr;
+
+
 struct GameApp : App::Module
 {
     EM_REFL(
@@ -95,15 +114,23 @@ struct GameApp : App::Module
         .vertex_buffers = {
             {
                 Gpu::Pipeline::VertexBuffer{
-                    .pitch = sizeof(fvec3) * 2,
+                    .pitch = sizeof(VertexAttr),
                     .attributes = {
                         Gpu::Pipeline::VertexAttribute{
-                            .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-                            .byte_offset_in_elem = 0,
+                            .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                            .byte_offset_in_elem = offsetof(VertexAttr, pos),
+                        },
+                        Gpu::Pipeline::VertexAttribute{
+                            .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+                            .byte_offset_in_elem = offsetof(VertexAttr, color),
+                        },
+                        Gpu::Pipeline::VertexAttribute{
+                            .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                            .byte_offset_in_elem = offsetof(VertexAttr, texcoord),
                         },
                         Gpu::Pipeline::VertexAttribute{
                             .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-                            .byte_offset_in_elem = sizeof(fvec3),
+                            .byte_offset_in_elem = offsetof(VertexAttr, factors),
                         },
                     }
                 }
@@ -113,6 +140,7 @@ struct GameApp : App::Module
             .color = {
                 Gpu::Pipeline::ColorTarget{
                     .texture_format = window.GetSwapchainTextureFormat(),
+                    .blending = Gpu::Pipeline::Blending::Premultiplied(),
                 },
             },
         },
@@ -142,8 +170,6 @@ struct GameApp : App::Module
         },
     });
 
-    Gpu::Buffer buffer = Gpu::Buffer(device, sizeof(fvec3) * 6);
-
     Gpu::Buffer upscale_triangle_buffer;
     Gpu::Texture upscale_triangle_texture = Gpu::Texture(device, Gpu::Texture::Params{
         .format = window.GetSwapchainTextureFormat(),
@@ -161,14 +187,26 @@ struct GameApp : App::Module
         .filter_mag = Gpu::Sampler::Filter::linear,
     });
 
-    Gpu::Texture texture;
+    // FPS counter: [
+    std::uint64_t frame_counter = 0;
+    std::uint64_t frame_counter_prev = 0;
+    std::uint64_t tick_counter = 0;
+    std::uint64_t tick_counter_prev = 0;
+    std::uint64_t last_second = 0;
+    int tps = 0;
+    int fps = 0;
+    // ]
+
+    World world;
+
+    Gpu::Texture main_texture;
 
     GameApp()
     {
         Gpu::CommandBuffer cmdbuf(device);
         Gpu::CopyPass pass(cmdbuf);
 
-        texture = LoadImage(device, pass, "test");
+        main_texture = LoadImage(device, pass, "test");
 
         fvec2 upscale_triangle_verts[3] = {
             fvec2(-1, -1),
@@ -176,6 +214,28 @@ struct GameApp : App::Module
             fvec2(-1, 3),
         };
         upscale_triangle_buffer = Gpu::Buffer(device, pass, {reinterpret_cast<const unsigned char *>(upscale_triangle_verts), sizeof(upscale_triangle_verts)});
+
+
+    }
+
+    Metronome metronome = Metronome(60);
+    std::uint64_t frame_start = std::size_t(-1);
+
+
+    // Render queue.
+    static constexpr int render_queue_max_verts = 3 * 1000; // Must be a multiple of three.
+    Gpu::Buffer render_queue_buffer = Gpu::Buffer(device, render_queue_max_verts * sizeof(VertexAttr));
+    Gpu::TransferBuffer render_queue_transfer_buffer = Gpu::TransferBuffer(device, render_queue_max_verts * sizeof(VertexAttr));
+    Gpu::TransferBuffer::Mapping render_queue_mapping;
+    std::size_t render_queue_num_verts = 0;
+
+    Gpu::RenderPass *main_pass = nullptr;
+    Gpu::CopyPass *queue_copy_pass = nullptr;
+
+    void FixedTick()
+    {
+        world.Tick();
+        tick_counter++;
     }
 
     App::Action Tick() override
@@ -183,9 +243,62 @@ struct GameApp : App::Module
         Gpu::CommandBuffer cmdbuf(device);
         Gpu::Texture swapchain_tex = cmdbuf.WaitAndAcquireSwapchainTexture(window);
 
+        if (!swapchain_tex)
+        {
+            cmdbuf.CancelWhenDestroyed();
+            return App::Action::cont; // No draw target.
+        }
+
+        Gpu::CommandBuffer cmdbuf_queue_upload(device);
+        Gpu::CopyPass copypass_queue_upload(cmdbuf_queue_upload);
+        queue_copy_pass = &copypass_queue_upload;
+        EM_FINALLY{ queue_copy_pass = nullptr; };
+
+        // Calculate scale.
         fvec2 skew_scale_vec2 = swapchain_tex.GetSize().to_vec2().to<float>() / screen_size;
         float scale = skew_scale_vec2.reduce(EM_FUNC(std::min));
         skew_scale_vec2 /= scale;
+
+        { // Update mouse pos.
+            fvec2 mouse_pos_f{};
+            SDL_GetMouseState(&mouse_pos_f.x, &mouse_pos_f.y);
+            ivec2 window_size{};
+            SDL_GetWindowSize(window.Handle(), &window_size.x, &window_size.y);
+
+            ivec2 mouse_pos = ((mouse_pos_f / window_size - 0.5) * skew_scale_vec2 * screen_size).map(EM_FUNC(std::round)).to<int>();
+            world.mouse_pos = mouse_pos;
+        }
+
+        { // Fixed tick.
+            // Compute timings if needed.
+            std::uint64_t delta = 0;
+            std::uint64_t new_frame_start = Clock::Time();
+
+            if (frame_start != std::uint64_t(-1))
+                delta = new_frame_start - frame_start;
+
+            frame_start = new_frame_start;
+
+            while (metronome.Tick(delta))
+                FixedTick();
+        }
+
+        { // Update frame counter and FPS.
+            frame_counter++;
+            std::uint64_t this_second = SDL_GetTicks() / 1000;
+            if (this_second != last_second)
+            {
+                last_second = this_second;
+
+                fps = int(frame_counter - frame_counter_prev);
+                frame_counter_prev = frame_counter;
+
+                tps = int(tick_counter - tick_counter_prev);
+                tick_counter_prev = tick_counter;
+
+                std::cout << "FPS: " << fps << "   TPS: " << tps << '\n';
+            }
+        }
 
         { // Recreate upscale texture (the larger one).
             int scale_int = std::max(1, (swapchain_tex.GetSize().to_vec2() / screen_size).reduce(EM_FUNC(std::min)));
@@ -200,28 +313,6 @@ struct GameApp : App::Module
             }
         }
 
-
-        { // Update triangle pos.
-            fvec2 mouse_pos_f{};
-            SDL_GetMouseState(&mouse_pos_f.x, &mouse_pos_f.y);
-            ivec2 window_size{};
-            SDL_GetWindowSize(window.Handle(), &window_size.x, &window_size.y);
-
-            ivec2 mouse_pos = ((mouse_pos_f / window_size - 0.5) * screen_size).map(EM_FUNC(std::round)).to<int>();
-
-            fvec3 arr[] = {
-                fvec3(mouse_pos.x, mouse_pos.y + 50, 0),
-                fvec3(1, 0, 0),
-                fvec3(mouse_pos.x + 50, mouse_pos.y - 50, 0),
-                fvec3(0, 1, 0),
-                fvec3(mouse_pos.x - 50, mouse_pos.y - 50, 0),
-                fvec3(0, 0, 1),
-            };
-            Gpu::CopyPass pass(cmdbuf);
-            Gpu::TransferBuffer tr_buffer(device, {(const unsigned char *)arr, sizeof arr});
-            tr_buffer.ApplyToBuffer(pass, buffer);
-        }
-
         { // Primary render pass.
             Gpu::RenderPass rp_first(cmdbuf, Gpu::RenderPass::Params{
                 .color_targets = {
@@ -232,24 +323,20 @@ struct GameApp : App::Module
                     },
                 },
             });
-
-            if (!swapchain_tex)
-            {
-                std::cout << "No swapchain texture, probably the window is minimized\n";
-                cmdbuf.CancelWhenDestroyed();
-                return App::Action::cont; // No draw target.
-            }
-
-            fmt::println("Swapchain texture has size: [{},{},{}]", swapchain_tex.GetSize().x, swapchain_tex.GetSize().y, swapchain_tex.GetSize().z);
-            fmt::println("Lowres texture has size: [{},{},{}]", upscale_triangle_texture.GetSize().x, upscale_triangle_texture.GetSize().y, upscale_triangle_texture.GetSize().z);
+            main_pass = &rp_first;
+            EM_FINALLY{ main_pass = nullptr; };
 
             rp_first.BindPipeline(pipeline_main);
-            rp_first.BindVertexBuffers({{Gpu::RenderPass::VertexBuffer{
-                .buffer = &buffer,
-            }}});
-            rp_first.BindTextures({{{.texture = &texture, .sampler = &sampler_nearest}}});
-            Gpu::Shader::SetUniform(cmdbuf, Gpu::Shader::Stage::fragment, 0, (screen_size * ivec2(1,-1)).to<float>());
-            rp_first.DrawPrimitives(3);
+
+            rp_first.BindTextures({{{.texture = &main_texture, .sampler = &sampler_nearest}}});
+            Gpu::Shader::SetUniform(cmdbuf, Gpu::Shader::Stage::vertex, 0, (screen_size * ivec2(1,-1)).to<float>());
+            Gpu::Shader::SetUniform(cmdbuf, Gpu::Shader::Stage::fragment, 0, main_texture.GetSize().to_vec2().to<float>());
+
+            RestartRendering();
+
+            world.Render();
+
+            FinishRendering();
         }
 
         { // Upscale.
@@ -259,6 +346,7 @@ struct GameApp : App::Module
                         .texture = {
                             .texture = &upscale_triangle_texture_large,
                         },
+                        .initial_contents = Gpu::RenderPass::ColorDontCare{},
                     },
                 },
             });
@@ -275,6 +363,7 @@ struct GameApp : App::Module
                         .texture = {
                             .texture = &swapchain_tex,
                         },
+                        // We still clear the output, to clear the sides not covered by the viewport.
                     },
                 },
             });
@@ -303,9 +392,57 @@ struct GameApp : App::Module
             return App::Action::exit_success;
         return App::Action::cont;
     }
+
+
+    // Render queue.
+
+    void FinishRendering()
+    {
+        render_queue_mapping = {};
+        render_queue_transfer_buffer.ApplyToBuffer(*queue_copy_pass, render_queue_buffer);
+        main_pass->BindVertexBuffers({{{.buffer = &render_queue_buffer}}});
+        main_pass->DrawPrimitives(std::uint32_t(render_queue_num_verts));
+        render_queue_num_verts = 0;
+    }
+
+    void RestartRendering()
+    {
+        render_queue_mapping = render_queue_transfer_buffer.Map();
+    }
+
+    void InsertVertex(const VertexAttr &v)
+    {
+        if (render_queue_num_verts >= render_queue_max_verts)
+        {
+            FinishRendering();
+            RestartRendering();
+        }
+
+        reinterpret_cast<VertexAttr *>(render_queue_mapping.Span().data())[render_queue_num_verts++] = v;
+    }
 };
+
+void DrawRectLow(ivec2 pos, ivec2 size, fvec2 tex_pos, fvec4 color, float mix_tex, float mix_tex_alpha, float beta)
+{
+    const fvec3 factors(mix_tex, mix_tex_alpha, beta);
+
+    VertexAttr v1{.pos = pos,                          .color = color, .texcoord = tex_pos,                              .factors = factors};
+    VertexAttr v2{.pos = ivec2(pos.x + size.x, pos.y), .color = color, .texcoord = fvec2(tex_pos.x + size.x, tex_pos.y), .factors = factors};
+    VertexAttr v3{.pos = pos + size,                   .color = color, .texcoord = tex_pos + size,                       .factors = factors};
+    VertexAttr v4{.pos = ivec2(pos.x, pos.y + size.y), .color = color, .texcoord = fvec2(tex_pos.x, tex_pos.y + size.y), .factors = factors};
+
+    global_app->InsertVertex(v1);
+    global_app->InsertVertex(v2);
+    global_app->InsertVertex(v4);
+
+    global_app->InsertVertex(v4);
+    global_app->InsertVertex(v2);
+    global_app->InsertVertex(v3);
+}
 
 std::unique_ptr<App::Module> em::Main()
 {
-    return std::make_unique<App::ReflectedApp<GameApp>>();
+    auto ret = std::make_unique<App::ReflectedApp<GameApp>>();
+    global_app = &ret->underlying;
+    return ret;
 }
