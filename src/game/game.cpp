@@ -115,11 +115,11 @@ struct GameApp : App::Module
         {
             Gpu::TransferBuffer::Mapping map = tr_buffer.Map();
             auto ptr = reinterpret_cast<fvec3 *>(map.Span().data());
-            *ptr++ = fvec3(0, 0.5, 0);
+            *ptr++ = fvec3(0, 50, 0);
             *ptr++ = fvec3(1, 0, 0);
-            *ptr++ = fvec3(0.5, -0.5, 0);
+            *ptr++ = fvec3(50, -50, 0);
             *ptr++ = fvec3(0, 1, 0);
-            *ptr++ = fvec3(-0.5, -0.5, 0);
+            *ptr++ = fvec3(-50, -50, 0);
             *ptr++ = fvec3(0, 0, 1);
         }
 
@@ -159,6 +159,7 @@ struct GameApp : App::Module
             .buffer = &buffer,
         }}});
         rp.BindTextures({{{.texture = &texture, .sampler = &sampler}}});
+        Gpu::Shader::SetUniform(cmdbuf, Gpu::Shader::Stage::fragment, 0, swapchain_tex.GetSize().to_vec2().to<float>());
         rp.DrawPrimitives(3);
 
         return App::Action::cont;

@@ -1,5 +1,6 @@
 #include "shader.h"
 
+#include "gpu/command_buffer.h"
 #include "gpu/device.h"
 
 #include <fmt/format.h>
@@ -26,7 +27,7 @@ namespace em::Gpu
             shadercross_stage = SDL_SHADERCROSS_SHADERSTAGE_COMPUTE;
             break;
           default:
-            throw std::runtime_error("Invalid shader stage enum.");
+            throw std::logic_error("Invalid shader stage enum.");
         }
 
         SDL_ShaderCross_SPIRV_Info input{
@@ -60,5 +61,24 @@ namespace em::Gpu
     {
         if (state.shader)
             SDL_ReleaseGPUShader(state.device, state.shader);
+    }
+
+    void Shader::SetUniformBytes(CommandBuffer &cmdbuf, Stage stage, std::uint32_t slot, std::span<const unsigned char> span)
+    {
+        // None of those functions can fail.
+        switch (stage)
+        {
+          case Stage::vertex:
+            SDL_PushGPUVertexUniformData(cmdbuf.Handle(), slot, span.data(), std::uint32_t(span.size()));
+            return;
+          case Stage::fragment:
+            SDL_PushGPUFragmentUniformData(cmdbuf.Handle(), slot, span.data(), std::uint32_t(span.size()));
+            return;
+          case Stage::compute:
+            SDL_PushGPUComputeUniformData(cmdbuf.Handle(), slot, span.data(), std::uint32_t(span.size()));
+            return;
+        }
+
+        throw std::logic_error("Invalid shader stage enum.");
     }
 }
