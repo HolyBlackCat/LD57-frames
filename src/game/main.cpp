@@ -1,3 +1,5 @@
+#include "main.h"
+
 #include "em/macros/utils/finally.h"
 #include "em/macros/utils/lift.h"
 #include "em/refl/macros/structs.h"
@@ -27,8 +29,6 @@
 #include <memory>
 
 using namespace em;
-
-static constexpr ivec2 screen_size = ivec2(1920, 1080) / 4;
 
 Gpu::Texture LoadImage(em::Gpu::Device &device, em::Gpu::CopyPass &pass, std::string_view filename)
 {
@@ -91,10 +91,10 @@ struct GameApp : App::Module
 {
     EM_REFL(
         (Sdl)(sdl, AppMetadata{
-            .name = "Hello world",
+            .name = "LD57",
             .version = "0.0.1",
             // .identifier = "",
-            // .author = "",
+            .author = "HolyBlackCat",
             // .copyright = "",
             // .url = "",
         })
@@ -206,7 +206,7 @@ struct GameApp : App::Module
         Gpu::CommandBuffer cmdbuf(device);
         Gpu::CopyPass pass(cmdbuf);
 
-        main_texture = LoadImage(device, pass, "test");
+        main_texture = LoadImage(device, pass, "texture");
 
         fvec2 upscale_triangle_verts[3] = {
             fvec2(-1, -1),
@@ -422,14 +422,12 @@ struct GameApp : App::Module
     }
 };
 
-void DrawRectLow(ivec2 pos, ivec2 size, fvec2 tex_pos, fvec4 color, float mix_tex, float mix_tex_alpha, float beta)
+void DrawRect(ivec2 pos, ivec2 size, const DrawSettings &settings)
 {
-    const fvec3 factors(mix_tex, mix_tex_alpha, beta);
-
-    VertexAttr v1{.pos = pos,                          .color = color, .texcoord = tex_pos,                              .factors = factors};
-    VertexAttr v2{.pos = ivec2(pos.x + size.x, pos.y), .color = color, .texcoord = fvec2(tex_pos.x + size.x, tex_pos.y), .factors = factors};
-    VertexAttr v3{.pos = pos + size,                   .color = color, .texcoord = tex_pos + size,                       .factors = factors};
-    VertexAttr v4{.pos = ivec2(pos.x, pos.y + size.y), .color = color, .texcoord = fvec2(tex_pos.x, tex_pos.y + size.y), .factors = factors};
+    VertexAttr v1{.pos = pos,                          .color = settings.color, .texcoord = settings.tex_pos,                                       .factors = settings.factors};
+    VertexAttr v2{.pos = ivec2(pos.x + size.x, pos.y), .color = settings.color, .texcoord = fvec2(settings.tex_pos.x + size.x, settings.tex_pos.y), .factors = settings.factors};
+    VertexAttr v3{.pos = pos + size,                   .color = settings.color, .texcoord = settings.tex_pos + size,                                .factors = settings.factors};
+    VertexAttr v4{.pos = ivec2(pos.x, pos.y + size.y), .color = settings.color, .texcoord = fvec2(settings.tex_pos.x, settings.tex_pos.y + size.y), .factors = settings.factors};
 
     global_app->InsertVertex(v1);
     global_app->InsertVertex(v2);
