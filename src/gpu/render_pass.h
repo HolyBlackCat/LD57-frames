@@ -151,6 +151,23 @@ namespace em::Gpu
         [[nodiscard]] SDL_GPURenderPass *Handle() {return state.pass;}
 
 
+        struct Viewport
+        {
+            // Those are measured in PIXELS, with top-left corner being zero.
+            // I'm not entirely sure if those are window pixels or framebuffer pixels (framebuffer can be larger), probably the latter.
+            fvec2 pos;
+            fvec2 size;
+
+            // Those are separate. Firstly for convenience, and secondly in the SDL they are min/max unlike pos/size above, and we do it this way too.
+            float min_depth = 0;
+            float max_depth = 1;
+        };
+
+        // Set the active viewport coordinates.
+        void SetViewport(const Viewport &viewport);
+
+
+        // Select the active pipeline.
         void BindPipeline(Pipeline &pipeline);
 
 

@@ -134,6 +134,20 @@ namespace em::Gpu
             SDL_EndGPURenderPass(state.pass);
     }
 
+    void RenderPass::SetViewport(const Viewport &viewport)
+    {
+        SDL_GPUViewport sdl_viewport{
+            .x = viewport.pos.x,
+            .y = viewport.pos.y,
+            .w = viewport.size.x,
+            .h = viewport.size.y,
+            .min_depth = viewport.min_depth,
+            .max_depth = viewport.max_depth,
+        };
+        // This can't fail.
+        SDL_SetGPUViewport(state.pass, &sdl_viewport);
+    }
+
     void RenderPass::BindPipeline(Pipeline &pipeline)
     {
         // This can't fail.

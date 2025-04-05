@@ -13,5 +13,5 @@ layout(location = 0) out vec2 v_texcoord;
 void main()
 {
     v_texcoord = a_texcoord;
-    gl_Position = vec4(a_pos / u_scr_size, 0, 1);
+    gl_Position = vec4(a_pos * 2 / u_scr_size, 0, 1);
 }

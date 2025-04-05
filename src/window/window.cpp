@@ -30,6 +30,9 @@ namespace em
         state.gpu_device = params.gpu_device->Handle();
         if (params.gpu_device && !SDL_ClaimWindowForGPUDevice(params.gpu_device->Handle(), state.window))
             throw std::runtime_error(fmt::format("Unable to attach SDL window to the GPU device: {}", SDL_GetError()));
+
+        if (!SDL_SetWindowMinimumSize(state.window, params.min_size ? params.min_size->x : params.size.x, params.min_size ? params.min_size->y : params.size.y))
+            throw std::runtime_error(fmt::format("Unable to set minimum window size: {}", SDL_GetError()));
     }
 
     Window::Window(Window &&other) noexcept

@@ -5,9 +5,11 @@
 #include <SDL3/SDL_gpu.h>
 
 #include <cstdint>
+#include <span>
 
 namespace em::Gpu
 {
+    class CopyPass;
     class Device;
 
     // A texture.
@@ -51,14 +53,10 @@ namespace em::Gpu
         };
         EM_FLAG_ENUM_IN_CLASS(Usage)
 
-        struct Params
-        {
-            Usage usage = Usage::vertex;
-
-            std::uint32_t size = 0;
-        };
-
-        Buffer(Device &device, const Params &params);
+        // Creates a buffer.
+        Buffer(Device &device, std::uint32_t size, Usage usage = Usage::vertex);
+        // A helper constructor that creates a buffer and immediately fills it using a temporary transfer buffer.
+        Buffer(Device &device, CopyPass &pass, std::span<const unsigned char> data, Usage usage = Usage::vertex);
 
         Buffer(Buffer &&other) noexcept;
         Buffer &operator=(Buffer other) noexcept;

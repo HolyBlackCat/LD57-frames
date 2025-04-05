@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <optional>
 #include <string_view>
 
 namespace em
@@ -35,6 +36,7 @@ namespace em
             Gpu::Device *gpu_device = nullptr; // GPU device, if this window uses the SDL GPU API. Otherwise leave null.
             std::string_view name = "{name}"; // Use `{name}` and `{version}` to query the application properties passed to `em::Sdl`.
             ivec2 size = ivec2(1920, 1080) / 3;
+            std::optional<ivec2> min_size{}; // If not set, matches `size`.
             bool resizable = true;
         };
 
