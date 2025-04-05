@@ -147,7 +147,7 @@ $(call Library,fmt,https://github.com/fmtlib/fmt/releases/download/11.1.4/fmt-11
 #   $(call LibrarySetting,build_system,copy_files)
 #   $(call LibrarySetting,copy_files,$(_win_sdl3_arch)/*->.)
 # else
-$(call Library,sdl3,https://github.com/libsdl-org/SDL/releases/download/release-3.2.8/SDL3-3.2.8.tar.gz)
+$(call Library,sdl3,https://github.com/libsdl-org/SDL/releases/download/release-3.2.10/SDL3-3.2.10.tar.gz)
   $(call LibrarySetting,cmake_allow_using_system_deps,1)
 # $(call Library,sdl3_net,SDL2_net-2.2.0.tar.gz)
 #   $(call LibrarySetting,deps,sdl3)
@@ -171,8 +171,8 @@ $(call Library,spirv_reflect,https://github.com/KhronosGroup/SPIRV-Reflect/archi
   $(call LibrarySetting,install_files,spirv_reflect.h->include)
 
 
-# $(call Library,stb,stb-31707d1-2024-10-03.zip)
-#   $(call LibrarySetting,build_system,copy_files)
-#   # Out of those, `rectpack` is used both by us and ImGui.
-#   # There's also `textedit`, which ImGui uses and we don't but we let ImGui keep its version, since it's slightly patched.
-#   $(call LibrarySetting,copy_files,stb_image.h->include stb_image_write.h->include stb_rect_pack.h->include)
+$(call Library,stb,https://github.com/nothings/stb/archive/f0569113c93ad095470c54bf34a17b36646bbbb5.zip)
+  $(call LibrarySetting,build_system,dummy)
+  # Out of those, `rectpack` is used both by us and ImGui.
+  # There's also `textedit`, which ImGui uses and we don't but we let ImGui keep its version, since it's slightly patched.
+  $(call LibrarySetting,install_files,*.h->include)

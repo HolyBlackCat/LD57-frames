@@ -2,9 +2,9 @@
 
 #include "em/math/vector.h"
 
-#include <string_view>
+#include <SDL3/SDL_gpu.h>
 
-typedef struct SDL_Window SDL_Window;
+#include <string_view>
 
 namespace em
 {
@@ -19,6 +19,11 @@ namespace em
         struct State
         {
             SDL_Window *window = nullptr;
+
+            // Not a `Device *` to keep the address stable.
+            // Only set if a GPU device is attached.
+            // This is here solely for our convenience. This lets us call `SDL_GetGPUSwapchainTextureFormat()`, for example.
+            SDL_GPUDevice *gpu_device = nullptr;
         };
         State state;
 
@@ -41,5 +46,9 @@ namespace em
 
         [[nodiscard]] explicit operator bool() const {return bool(state.window);}
         [[nodiscard]] SDL_Window *Handle() {return state.window;}
+
+        // The texture format this window uses for rendering.
+        // Only makes sense if a GPU device is attached.
+        SDL_GPUTextureFormat GetSwapchainTextureFormat() const;
     };
 }

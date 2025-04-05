@@ -1,10 +1,12 @@
+#include "em/macros/utils/finally.h"
 #include "em/refl/macros/structs.h"
 #include "gpu/buffer.h"
 #include "gpu/command_buffer.h"
-#include "gpu/device.h"
 #include "gpu/copy_pass.h"
+#include "gpu/device.h"
 #include "gpu/pipeline.h"
 #include "gpu/render_pass.h"
+#include "gpu/sampler.h"
 #include "gpu/shader.h"
 #include "gpu/transfer_buffer.h"
 #include "mainloop/main.h"
@@ -13,10 +15,34 @@
 #include "window/sdl.h"
 #include "window/window.h"
 
+#include "stb_image.h"
+
 #include <iostream>
 #include <memory>
 
 using namespace em;
+
+Gpu::Texture LoadImage(em::Gpu::Device &device, em::Gpu::CopyPass &pass, std::string_view filename)
+{
+    std::string path = fmt::format("{}assets/images/{}.png", Filesystem::GetResourceDir(), filename);
+    Filesystem::File file(path, "rb");
+    ivec2 pixel_size;
+    int num_channels = 4;
+    unsigned char *stb_data = stbi_load_from_file(file.Handle(), &pixel_size.x, &pixel_size.y, nullptr, num_channels);
+    if (!stb_data)
+        throw std::runtime_error(fmt::format("Unable to load image `{}`.", path));
+    EM_FINALLY{ stbi_image_free(stb_data); };
+
+    std::size_t byte_size = std::size_t(pixel_size.prod() * num_channels);
+
+    Gpu::TransferBuffer tb(device, {stb_data, byte_size});
+
+    Gpu::Texture tex(device, Gpu::Texture::Params{
+        .size = pixel_size.to_vec3(1),
+    });
+    tb.ApplyToTexture(pass, tex);
+    return tex;
+}
 
 struct GameApp : App::Module
 {
@@ -29,16 +55,16 @@ struct GameApp : App::Module
             // .copyright = "",
             // .url = "",
         })
-        (Gpu::Device)(gpu, Gpu::Device::Params{})
+        (Gpu::Device)(device, Gpu::Device::Params{})
         (Window)(window, Window::Params{
-            .gpu_device = &gpu,
+            .gpu_device = &device,
         })
     )
 
-    Gpu::Shader sh_v = Gpu::Shader(gpu, "main vert", Gpu::Shader::Stage::vertex, Filesystem::LoadedFile(fmt::format("{}assets/shaders/main.vert.spv", Filesystem::GetResourceDir())));
-    Gpu::Shader sh_f = Gpu::Shader(gpu, "main frag", Gpu::Shader::Stage::fragment, Filesystem::LoadedFile(fmt::format("{}assets/shaders/main.frag.spv", Filesystem::GetResourceDir())));
+    Gpu::Shader sh_v = Gpu::Shader(device, "main vert", Gpu::Shader::Stage::vertex, Filesystem::LoadedFile(fmt::format("{}assets/shaders/main.vert.spv", Filesystem::GetResourceDir())));
+    Gpu::Shader sh_f = Gpu::Shader(device, "main frag", Gpu::Shader::Stage::fragment, Filesystem::LoadedFile(fmt::format("{}assets/shaders/main.frag.spv", Filesystem::GetResourceDir())));
 
-    Gpu::Pipeline pipeline = Gpu::Pipeline(gpu, Gpu::Pipeline::Params{
+    Gpu::Pipeline pipeline = Gpu::Pipeline(device, Gpu::Pipeline::Params{
         .shaders = {
             .vert = &sh_v,
             .frag = &sh_f,
@@ -60,15 +86,29 @@ struct GameApp : App::Module
                 }
             }
         },
+        .targets = {
+            .color = {
+                Gpu::Pipeline::ColorTarget{
+                    .texture_format = window.GetSwapchainTextureFormat(),
+                },
+            },
+        },
     });
 
-    Gpu::Buffer buffer = Gpu::Buffer(gpu, Gpu::Buffer::Params{
+    Gpu::Buffer buffer = Gpu::Buffer(device, Gpu::Buffer::Params{
         .size = sizeof(fvec3) * 6,
+    });
+
+    Gpu::Texture texture;
+
+    Gpu::Sampler sampler = Gpu::Sampler(device, Gpu::Sampler::Params{
+        .filter_min = Gpu::Sampler::Filter::nearest,
+        .filter_mag = Gpu::Sampler::Filter::nearest,
     });
 
     GameApp()
     {
-        Gpu::TransferBuffer tr_buffer = Gpu::TransferBuffer(gpu, Gpu::TransferBuffer::Params{
+        Gpu::TransferBuffer tr_buffer = Gpu::TransferBuffer(device, Gpu::TransferBuffer::Params{
             .size = sizeof(fvec3) * 6,
         });
 
@@ -83,15 +123,18 @@ struct GameApp : App::Module
             *ptr++ = fvec3(0, 0, 1);
         }
 
-        Gpu::CommandBuffer cmdbuf(gpu);
+        Gpu::CommandBuffer cmdbuf(device);
         Gpu::CopyPass pass(cmdbuf);
-        tr_buffer.UploadToBuffer(pass, buffer);
+        tr_buffer.ApplyToBuffer(pass, buffer);
+
+        texture = LoadImage(device, pass, "test");
     }
 
     App::Action Tick() override
     {
-        Gpu::CommandBuffer cmdbuf(gpu);
+        Gpu::CommandBuffer cmdbuf(device);
         Gpu::Texture swapchain_tex = cmdbuf.WaitAndAcquireSwapchainTexture(window);
+
         Gpu::RenderPass rp(cmdbuf, Gpu::RenderPass::Params{
             .color_targets = {
                 Gpu::RenderPass::ColorTarget{
@@ -109,12 +152,13 @@ struct GameApp : App::Module
             return App::Action::cont; // No draw target.
         }
 
-        fmt::println("Swapchain texture has size: [{},{},{}]", swapchain_tex.Size().x, swapchain_tex.Size().y, swapchain_tex.Size().z);
+        fmt::println("Swapchain texture has size: [{},{},{}]", swapchain_tex.GetSize().x, swapchain_tex.GetSize().y, swapchain_tex.GetSize().z);
 
         rp.BindPipeline(pipeline);
         rp.BindVertexBuffers({{Gpu::RenderPass::VertexBuffer{
             .buffer = &buffer,
         }}});
+        rp.BindTextures({{{.texture = &texture, .sampler = &sampler}}});
         rp.DrawPrimitives(3);
 
         return App::Action::cont;

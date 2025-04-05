@@ -27,6 +27,7 @@ namespace em
         if (!state.window)
             throw std::runtime_error(fmt::format("Unable to create SDL window: {}", SDL_GetError()));
 
+        state.gpu_device = params.gpu_device->Handle();
         if (params.gpu_device && !SDL_ClaimWindowForGPUDevice(params.gpu_device->Handle(), state.window))
             throw std::runtime_error(fmt::format("Unable to attach SDL window to the GPU device: {}", SDL_GetError()));
     }
@@ -47,5 +48,10 @@ namespace em
     {
         if (state.window)
             SDL_DestroyWindow(state.window);
+    }
+
+    SDL_GPUTextureFormat Window::GetSwapchainTextureFormat() const
+    {
+        return SDL_GetGPUSwapchainTextureFormat(state.gpu_device, state.window);
     }
 }

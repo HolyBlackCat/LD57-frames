@@ -210,7 +210,8 @@ namespace em::Gpu
 
             // The blending mode.
             // Must construct this to enable blending.
-            std::optional<Blending> blending;
+            // Adding `{}` to disable Clang warning about omitting the initializer for this in designated initialization.
+            std::optional<Blending> blending{};
 
             // Which color channels to update. All ones by default.
             bvec4 color_write_mask = bvec4(1);
@@ -223,7 +224,8 @@ namespace em::Gpu
             std::vector<ColorTarget> color = {ColorTarget{}};
 
             // Set this to enable the depth/stencil target.
-            std::optional<SDL_GPUTextureFormat> depth_stencil_format;
+            // Adding `{}` to disable Clang warning about omitting the initializer for this in designated initialization.
+            std::optional<SDL_GPUTextureFormat> depth_stencil_format{};
         };
 
         struct Params

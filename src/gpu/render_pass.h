@@ -1,7 +1,6 @@
 #pragma once
 
 #include "em/math/vector.h"
-#include "gpu/buffer.h"
 
 #include <SDL3/SDL_gpu.h>
 
@@ -13,9 +12,12 @@
 
 namespace em::Gpu
 {
+    class Buffer;
     class CommandBuffer;
-    class Texture;
     class Pipeline;
+    class Sampler;
+    class Shader;
+    class Texture;
 
     class RenderPass
     {
@@ -159,7 +161,32 @@ namespace em::Gpu
             std::uint32_t byte_offset = 0;
         };
 
+        // Select what vertex buffer to use.
         void BindVertexBuffers(std::span<const VertexBuffer> buffers, std::uint32_t first_slot = 0);
+
+
+        struct TextureAndSampler
+        {
+            Texture *texture = nullptr;
+            Sampler *sampler = nullptr;
+        };
+
+        // This is separate from `Shader::Stage` because we can't list compute shaders here, because they must be used in a compute pass, not here.
+        enum class ShaderStage
+        {
+            vertex,
+            fragment,
+        };
+
+        // Select what textures to use. The slots are in a separate namespace unrelated to vertex buffers,
+        //   and apparently each shader stage has its own namespace.
+        // In vertex shaders use `layout(set = 0, binding = MySlotIndex) uniform sampler2D` (or other sampler types).
+        // In fragment shaders use `layout(set = 2, binding = MySlotIndex) uniform sampler2D` (or other sampler types).
+        // See for more details:  https://wiki.libsdl.org/SDL3/SDL_CreateGPUShader
+        void BindTextures(std::span<const TextureAndSampler> textures, ShaderStage shader_stage = ShaderStage::fragment, std::uint32_t first_slot = 0);
+
+
+        // Drawing:
 
         void DrawPrimitives(std::uint32_t num_vertices, std::uint32_t first_vertex = 0) {DrawPrimitivesInstanced(num_vertices, 1, first_vertex, 0);}
         void DrawPrimitivesInstanced(std::uint32_t num_vertices, std::uint32_t num_instances, std::uint32_t first_vertex = 0, std::uint32_t first_instance = 0);
