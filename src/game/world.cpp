@@ -1,6 +1,7 @@
 #include "world.h"
 
 #include "em/macros/utils/lift.h"
+#include "em/macros/utils/named_loops.h"
 #include "main.h"
 
 #include <SDL3/SDL_mouse.h>
@@ -58,7 +59,7 @@ namespace Frames
             "-----",
             "-----",
             "-----",
-            "-----",
+            "--1--",
             "-###-",
             "-----",
         }),
@@ -69,6 +70,12 @@ namespace Frames
             "-###-",
         });
 }
+
+enum class SpawnedEntity
+{
+    none,
+    player,
+};
 
 struct Frame
 {
@@ -83,8 +90,15 @@ struct Frame
     bool dragged = false;
     ivec2 drag_offset_relative_to_mouse;
 
-    Frame(const FrameType &type, ivec2 pos)
-        : type(&type), pos(pos)
+    // Which entity this frame can spawn at the `1` marker.
+    SpawnedEntity spawned_entity_type;
+
+    bool did_spawn_entity = false;
+    // Pixel offset relative to `pos` to the spawned entity.
+    ivec2 offset_to_spawned_entity;
+
+    Frame(const FrameType &type, ivec2 pos, SpawnedEntity spawned_entity_type = SpawnedEntity::none)
+        : type(&type), pos(pos), spawned_entity_type(spawned_entity_type)
     {}
 
     [[nodiscard]] ivec2 TopLeftCorner() const
@@ -132,18 +146,68 @@ struct World::State
     std::vector<Frame> frames;
 
 
+    bool player_exists = false;
+    ivec2 player_pos;
+
+
+    bool movement_started = false;
+
+
     State()
     {
         frames.emplace_back(
             Frames::flower_island,
-            ivec2(0,0)
+            ivec2(0,0),
+            SpawnedEntity::player
         );
 
         frames.emplace_back(
             Frames::vortex,
             ivec2(100,0)
         );
+
+        InitEntitiesFromFrames();
     }
+
+    void InitEntityFromSpecificFrame(Frame &frame)
+    {
+        if (frame.spawned_entity_type != SpawnedEntity{})
+        {
+            if (!frame.did_spawn_entity)
+            {
+                for (int y = 0; y < frame.type->TileSize().y; y++) EM_NAMED_LOOP(outer)
+                for (int x = 0; x < frame.type->TileSize().x; x++)
+                {
+                    if (frame.type->tiles[std::size_t(y)][std::size_t(x)] == '1')
+                    {
+                        frame.did_spawn_entity = true;
+                        frame.offset_to_spawned_entity = frame.TopLeftCorner() + ivec2(x, y) * tile_size + tile_size / 2 - frame.pos;
+                        EM_BREAK(outer);
+                    }
+                }
+
+                if (!frame.did_spawn_entity)
+                    throw std::runtime_error("This frame wants to spawn an entity, but has no marker for it.");
+            }
+
+            switch (frame.spawned_entity_type)
+            {
+              case SpawnedEntity::none:
+                std::unreachable();
+              case SpawnedEntity::player:
+                player_exists = true;
+                player_pos = frame.pos + frame.offset_to_spawned_entity;
+                break;
+            }
+        }
+    }
+
+    void InitEntitiesFromFrames()
+    {
+        for (Frame &frame : frames)
+            InitEntityFromSpecificFrame(frame);
+    }
+
 
     void Tick()
     {
@@ -216,6 +280,10 @@ struct World::State
             if (frames.back().dragged)
             {
                 frames.back().pos = mouse.pos + frames.back().drag_offset_relative_to_mouse;
+
+                // Drag the entities with the frames.
+                if (!movement_started)
+                    InitEntityFromSpecificFrame(frames.back());
             }
         }
     }
@@ -239,6 +307,14 @@ struct World::State
         for (const Frame &frame : frames)
         {
             frame.Render();
+        }
+
+        // Player.
+        if (player_exists)
+        {
+            static constexpr int player_sprite_size = 16;
+
+            DrawRect(player_pos - player_sprite_size / 2, ivec2(player_sprite_size), {ivec2(0, 240)});
         }
     }
 };
