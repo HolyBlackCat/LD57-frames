@@ -144,7 +144,7 @@ namespace Frames
         vert_glass_tube(ivec2(15,4), {
             "---",
             "#-#",
-            "#-#",
+            "#1#",
             "#-#",
         }),
         stone_wall(ivec2(27,0), {
@@ -163,9 +163,9 @@ namespace Frames
             "##-",
         }),
         coil(ivec2(21,7), {
-            "---",
+            "-1-",
             "###",
-            "#1#",
+            "#-#",
         }),
         snek(ivec2(27,8), {
             "#1###3#",
@@ -196,6 +196,11 @@ namespace Frames
             "1--",
             "#--",
             "##-",
+        }),
+        thanks(ivec2(37,0), {
+            "----------",
+            "--------1-",
+            "----------",
         })
         ;
 }
@@ -398,6 +403,14 @@ static const std::vector<Level> levels = {
             Frame(Frames::cat, ivec2(120, 0), {SpawnedEntity::key}),
         }
     },
+    {
+        6, ivec2(0,-1),
+        {
+            Frame(Frames::cat, ivec2(-40, 50), {SpawnedEntity::player}),
+            Frame(Frames::vert_glass_tube, ivec2(40, 50), {SpawnedEntity::exit}),
+            Frame(Frames::thanks, ivec2(0, -50), {SpawnedEntity::key}),
+        }
+    },
 };
 
 
@@ -425,6 +438,7 @@ struct World::State
 
     float fade = 1;
     bool winning_fade_out = false;
+    int winning_timer = 0;
 
 
     struct Player
@@ -525,6 +539,7 @@ struct World::State
 
         fade = 1;
         winning_fade_out = false;
+        winning_timer = 0;
         particles.clear();
     }
 
@@ -1174,38 +1189,27 @@ struct World::State
         player.exists_prev = player.exists;
 
         { // Restarting on death. Also switching to the next level on win.
-            if (!player.exists)
+            if (!player.exists && !winning_fade_out)
             {
                 player.death_timer++;
                 if (player.death_timer > 45)
                 {
-                    if (winning_fade_out)
+                    audio.Play("respawn"_sound, player.pos, 1, RandFloat11() * 0.2f);
+                    RestartLevel();
+
+                    for (int i = 0; i < 16; i++)
                     {
-                        current_level_index++;
-                        if (current_level_index >= levels.size())
-                            std::exit(0); // Oh well.
+                        float a1 = RandAngle();
 
-                        LoadLevelData();
-                    }
-                    else
-                    {
-                        audio.Play("respawn"_sound, player.pos, 1, RandFloat11() * 0.2f);
-                        RestartLevel();
-
-                        for (int i = 0; i < 16; i++)
-                        {
-                            float a1 = RandAngle();
-
-                            particles.push_back(Particle(
-                                player.pos + fvec2(std::cos(a1), std::sin(a1)) * (3 + RandFloat01()),
-                                fvec2(std::cos(a1), std::sin(a1)) * (1),
-                                fvec2(),
-                                0.05f,
-                                fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(1),
-                                3,
-                                20
-                            ));
-                        }
+                        particles.push_back(Particle(
+                            player.pos + fvec2(std::cos(a1), std::sin(a1)) * (3 + RandFloat01()),
+                            fvec2(std::cos(a1), std::sin(a1)) * (1),
+                            fvec2(),
+                            0.05f,
+                            fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(1),
+                            3,
+                            20
+                        ));
                     }
                 }
             }
@@ -1217,9 +1221,20 @@ struct World::State
 
             if (winning_fade_out)
             {
-                fade += fade_step;
-                if (fade > 1)
-                    fade = 1;
+                winning_timer++;
+
+                if (winning_timer > 45)
+                {
+                    fade += fade_step;
+                    if (fade > 1)
+                    {
+                        current_level_index++;
+                        if (current_level_index >= levels.size())
+                            std::exit(0); // Oh well.
+
+                        LoadLevelData();
+                    }
+                }
             }
             else
             {

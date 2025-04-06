@@ -93,7 +93,7 @@ struct GameApp : App::Module
 {
     EM_REFL(
         (Sdl)(sdl, AppMetadata{
-            .name = "LD57",
+            .name = "Frames (for LD57 by HolyBlackCat)",
             .version = "0.0.1",
             // .identifier = "",
             .author = "HolyBlackCat",
@@ -337,7 +337,7 @@ struct GameApp : App::Module
                 tick_counter_prev = tick_counter;
 
                 static std::string base_title = SDL_GetWindowTitle(window.Handle());
-                std::string new_title = fmt::format("{}    FPS: {}  TPS: {}  SOUNDS: {}", base_title, fps, tps, audio.ActiveSources());
+                std::string new_title = fmt::format("{}    FPS: {}  TPS: {}", base_title, fps, tps);
                 SDL_SetWindowTitle(window.Handle(), new_title.c_str());
             }
         }
