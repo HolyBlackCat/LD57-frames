@@ -147,12 +147,34 @@ namespace Frames
             "#-#",
             "#-#",
             "#-#",
+        }),
+        stone_wall(ivec2(27,0), {
+            "-------",
+            "---2---",
+            "-------",
+            "-------",
+            "-------",
+            "-------",
+            "---1---",
+            "#######",
+        }),
+        chimney(ivec2(24,7), {
+            "---",
+            "##-",
+            "##-",
+        }),
+        coil(ivec2(21,7), {
+            "---",
+            "###",
+            "#-#",
         })
         ;
 }
 
 enum class SpawnedEntity
 {
+    // This is needed only for padding, in case you only want to place an entity at `2` and not `1`, for example.
+    none,
     player,
     exit,
 };
@@ -304,12 +326,20 @@ static const std::vector<Level> levels = {
         }
     },
     {
+        3, ivec2(0,1),
+        {
+            Frame(Frames::stone_wall, ivec2(50,0), {SpawnedEntity::player, SpawnedEntity::exit}),
+            Frame(Frames::chimney, ivec2(-50, -40)),
+            Frame(Frames::coil, ivec2(-50, 40)),
+        }
+    },
+    {
         2, ivec2(0,1),
         {
-            Frame(Frames::bubbles, ivec2(-60,0), {SpawnedEntity::player, SpawnedEntity::exit}),
-            Frame(Frames::vert_glass_tube, ivec2(30, 0)),
+            Frame(Frames::bubbles, ivec2(-40,0), {SpawnedEntity::player, SpawnedEntity::exit}),
+            Frame(Frames::vert_glass_tube, ivec2(80, 0)),
         }
-    }
+    },
 };
 
 
@@ -398,6 +428,8 @@ struct World::State
 
             switch (e)
             {
+              case SpawnedEntity::none:
+                break; // Do nothing.
               case SpawnedEntity::player:
                 player.exists = true;
                 player.pos = frame.pos + offset_to_spawned_entity;
