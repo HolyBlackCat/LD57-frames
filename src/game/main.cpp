@@ -296,7 +296,9 @@ struct GameApp : App::Module
                 tps = int(tick_counter - tick_counter_prev);
                 tick_counter_prev = tick_counter;
 
-                std::cout << "FPS: " << fps << "   TPS: " << tps << '\n';
+                static std::string base_title = SDL_GetWindowTitle(window.Handle());
+                std::string new_title = fmt::format("{}    FPS: {}  TPS: {}", base_title, fps, tps);
+                SDL_SetWindowTitle(window.Handle(), new_title.c_str());
             }
         }
 
@@ -428,6 +430,12 @@ void DrawRect(ivec2 pos, ivec2 size, const DrawSettings &settings)
     VertexAttr v2{.pos = ivec2(pos.x + size.x, pos.y), .color = settings.color, .texcoord = fvec2(settings.tex_pos.x + size.x, settings.tex_pos.y), .factors = settings.factors};
     VertexAttr v3{.pos = pos + size,                   .color = settings.color, .texcoord = settings.tex_pos + size,                                .factors = settings.factors};
     VertexAttr v4{.pos = ivec2(pos.x, pos.y + size.y), .color = settings.color, .texcoord = fvec2(settings.tex_pos.x, settings.tex_pos.y + size.y), .factors = settings.factors};
+
+    if (settings.flip_x)
+    {
+        std::swap(v1.texcoord, v2.texcoord);
+        std::swap(v3.texcoord, v4.texcoord);
+    }
 
     global_app->InsertVertex(v1);
     global_app->InsertVertex(v2);

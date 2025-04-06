@@ -1,11 +1,13 @@
 #include "world.h"
 
+#include "SDL3/SDL_keyboard.h"
 #include "em/macros/utils/lift.h"
 #include "em/macros/utils/named_loops.h"
 #include "main.h"
 
 #include <SDL3/SDL_mouse.h>
 
+#include <cassert>
 #include <cmath>
 #include <string>
 
@@ -23,6 +25,22 @@ struct Mouse
     [[nodiscard]] bool IsReleased() const {return !is_down && is_down_prev;}
 };
 static Mouse mouse;
+
+struct Key
+{
+    bool is_down = false;
+    bool is_down_prev = false;
+
+    [[nodiscard]] bool IsPressed() const {return is_down && !is_down_prev;}
+};
+
+struct Keys
+{
+    Key left;
+    Key right;
+    Key jump;
+};
+static Keys keys;
 
 
 struct FrameType
@@ -90,12 +108,20 @@ struct Frame
     bool dragged = false;
     ivec2 drag_offset_relative_to_mouse;
 
+
     // Which entity this frame can spawn at the `1` marker.
     SpawnedEntity spawned_entity_type;
 
     bool did_spawn_entity = false;
     // Pixel offset relative to `pos` to the spawned entity.
     ivec2 offset_to_spawned_entity;
+
+
+    bool aabb_overlaps_player = false;
+
+    // Ignore collisions because the player got under this frame.
+    bool player_is_under_this_frame = false;
+
 
     Frame(const FrameType &type, ivec2 pos, SpawnedEntity spawned_entity_type = SpawnedEntity::none)
         : type(&type), pos(pos), spawned_entity_type(spawned_entity_type)
@@ -110,11 +136,29 @@ struct Frame
         return type->PixelSize();
     }
 
-    [[nodiscard]] bool PixelIsInRect(ivec2 pixel) const
+    [[nodiscard]] bool WorldPixelIsInRect(ivec2 pixel) const
     {
         ivec2 a = TopLeftCorner();
         ivec2 b = a + PixelSize();
         return pixel.x >= a.x && pixel.y >= a.y && pixel.x < b.x && pixel.y < b.y;
+    }
+
+    // -1 = not in AABB, 0 = not solid, 1 = solid
+    int QueryWorldPixel(ivec2 pixel) const
+    {
+        if (!WorldPixelIsInRect(pixel))
+            return -1;
+
+        ivec2 coord = (pixel - TopLeftCorner()) / tile_size;
+        ivec2 num_tiles = type->TileSize();
+
+        if (coord.x < 0 || coord.y < 0 || coord.x >= num_tiles.x || coord.y >= num_tiles.y)
+        {
+            assert(false); // This shouldn't happen, as we already checked `WorldPixelIsInRect()`.
+            return -1;
+        }
+
+        return type->tiles.at(std::size_t(coord.y)).at(std::size_t(coord.x)) == '#';
     }
 
     void Render() const
@@ -122,18 +166,20 @@ struct Frame
         ivec2 corner_pos = TopLeftCorner();
         ivec2 pixel_size = PixelSize();
 
+        float under_alpha = player_is_under_this_frame ? 0.5f : 1;
+
         // Shadow.
         DrawRectAbs(
             corner_pos - ivec2(-1) - (hover_time * ivec2(-1,-1)).map(EM_FUNC(std::round)).to<int>(),
             corner_pos + pixel_size + ivec2(2,2) + (hover_time * ivec2(1,3)).map(EM_FUNC(std::round)).to<int>(),
-            fvec4(0,0,0,0.5f)
+            fvec4(0, 0, 0, 0.5f * under_alpha)
         );
 
         // The image.
-        DrawRect(corner_pos, pixel_size, {ivec2(0, 128) + tile_size * type->tex_pos, 1, 1});
+        DrawRect(corner_pos, pixel_size, {ivec2(0, 128) + tile_size * type->tex_pos, under_alpha, 1});
 
         // The frame.
-        DrawRectHollow(corner_pos, pixel_size, 1, fvec4(0,0,0,1));
+        DrawRectHollow(corner_pos, pixel_size, 1, fvec4(0,0,0,under_alpha));
 
         // Hover indicator.
         if (hovered)
@@ -148,7 +194,11 @@ struct World::State
 
     bool player_exists = false;
     ivec2 player_pos;
-
+    fvec2 player_vel;
+    fvec2 player_vel_comp;
+    bool player_on_ground = false;
+    bool player_facing_left = false;
+    int player_movement_timer = 0;
 
     bool movement_started = false;
 
@@ -211,6 +261,14 @@ struct World::State
 
     void Tick()
     {
+        static constexpr ivec2 player_hitbox[] = {
+            ivec2( 3, 7),
+            ivec2(-4, 7),
+            ivec2( 3,-3),
+            ivec2(-4,-3),
+        };
+
+
         std::size_t hovered_frame_index = std::size_t(-1);
 
         bool any_frame_dragged = std::any_of(frames.begin(), frames.end(), EM_MEMBER(.dragged));
@@ -221,7 +279,7 @@ struct World::State
             while (i-- > 0)
             {
                 Frame &frame = frames[i];
-                if (!found && (frame.dragged || frame.PixelIsInRect(mouse.pos)))
+                if (!found && (frame.dragged || frame.WorldPixelIsInRect(mouse.pos)))
                 {
                     found = true;
                     frame.hovered = true;
@@ -286,9 +344,180 @@ struct World::State
                     InitEntityFromSpecificFrame(frames.back());
             }
         }
+
+        { // Update AABB overlap flags for frames.
+            for (Frame &frame : frames)
+            {
+                frame.aabb_overlaps_player = false;
+                for (ivec2 point : player_hitbox)
+                {
+                    if (frame.WorldPixelIsInRect(player_pos + point))
+                    {
+                        frame.aabb_overlaps_player = true;
+                        break;
+                    }
+                }
+
+                // Reset the "under frame" flag if no overlap.
+                if (!frame.aabb_overlaps_player)
+                    frame.player_is_under_this_frame = false;
+            }
+        }
+
+        // Player.
+        if (player_exists)
+        {
+            static constexpr float
+                walk_speed = 1.5f,
+                walk_acc = 0.4f,
+                walk_dec = 0.4f,
+                gravity = 0.14f,
+                max_fall_speed = 4
+                ;
+
+            int hc = keys.right.is_down - keys.left.is_down;
+
+            // Horizontal control.
+            if (hc)
+            {
+                player_facing_left = hc < 0;
+
+                player_vel.x += hc * walk_acc;
+                if (std::abs(player_vel.x) > walk_speed)
+                    player_vel.x = player_vel.x > 0 ? walk_speed : -walk_speed;
+            }
+            else
+            {
+                bool flip = player_vel.x < 0;
+                if (flip)
+                    player_vel.x = -player_vel.x;
+
+                if (player_vel.x > walk_dec)
+                    player_vel.x -= walk_dec;
+                else
+                    player_vel.x = 0;
+
+                if (flip)
+                    player_vel.x = -player_vel.x;
+            }
+
+
+            auto SolidAtOffset = [&](ivec2 offset, bool update_frames)
+            {
+                bool ret = false;
+
+                for (ivec2 point : player_hitbox)
+                {
+                    bool found_aabb_overlap = false;
+
+                    std::size_t i = frames.size();
+                    while (i-- > 0)
+                    {
+                        Frame &frame = frames[i];
+
+                        if (!found_aabb_overlap && !frame.player_is_under_this_frame)
+                        {
+                            int r = frame.QueryWorldPixel(player_pos + point + offset);
+
+                            if (r >= 0)
+                                found_aabb_overlap = true;
+
+                            if (r == 1)
+                            {
+                                if (!frame.aabb_overlaps_player && update_frames)
+                                {
+                                    frame.player_is_under_this_frame = true;
+                                }
+                                else
+                                {
+                                    ret = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return ret;
+            };
+
+            player_on_ground = SolidAtOffset(ivec2(0, 1), false);
+
+
+            if (player_on_ground)
+            {
+                if (keys.jump.IsPressed())
+                {
+                    player_vel.y = -3;
+                    player_vel_comp.y = 0;
+                }
+                else
+                {
+                    if (player_vel.y > 0)
+                    {
+                        player_vel.y = 0;
+                        if (player_vel_comp.y > 0)
+                            player_vel_comp.y = 0;
+                    }
+                }
+            }
+            else
+            {
+                player_vel.y += gravity;
+                if (player_vel.y > max_fall_speed)
+                    player_vel.y = max_fall_speed;
+            }
+
+
+            { // Update position.
+                fvec2 vel_with_comp = player_vel + player_vel_comp;
+                ivec2 int_vel = vel_with_comp.map(EM_FUNC(std::round)).to<int>();
+                player_vel_comp = vel_with_comp - int_vel;
+                player_vel_comp *= 0.98f;
+
+                bool moved_x = false;
+
+                while (int_vel != ivec2())
+                {
+                    for (bool vert : {false, true})
+                    {
+                        if (int_vel[vert] == 0)
+                            continue;
+
+                        ivec2 offset;
+                        offset[vert] = int_vel[vert] > 0 ? 1 : -1;
+
+                        if (SolidAtOffset(offset, true))
+                        {
+                            if (int_vel[vert] * player_vel[vert] > 0)
+                            {
+                                player_vel[vert] = 0;
+                                if (int_vel[vert] * player_vel_comp[vert] > 0)
+                                    player_vel_comp[vert] = 0;
+                            }
+                            int_vel[vert] = 0;
+                        }
+                        else
+                        {
+                            int_vel -= offset;
+                            player_pos += offset;
+
+                            if (!vert)
+                                moved_x = true;
+                        }
+                    }
+                }
+
+                player_pos += int_vel;
+
+                if (moved_x)
+                    player_movement_timer++;
+                else
+                    player_movement_timer = 0;
+            }
+        }
     }
 
-    void Render()
+    void Render() const
     {
         { // Background.
             static constexpr ivec2 bg_size(128);
@@ -304,9 +533,13 @@ struct World::State
         DrawRect(-screen_size / 2, screen_size, {ivec2(544, 754), 0.1f});
 
         // Frames.
-        for (const Frame &frame : frames)
+        std::size_t frame_index = 0;
+        for (; frame_index < frames.size(); frame_index++)
         {
-            frame.Render();
+            if (frames[frame_index].player_is_under_this_frame)
+                break;
+
+            frames[frame_index].Render();
         }
 
         // Player.
@@ -314,7 +547,39 @@ struct World::State
         {
             static constexpr int player_sprite_size = 16;
 
-            DrawRect(player_pos - player_sprite_size / 2, ivec2(player_sprite_size), {ivec2(0, 240)});
+            int pl_state = 0;
+            int pl_frame = 0;
+            if (player_on_ground)
+            {
+                if (player_movement_timer > 0)
+                {
+                    pl_state = 1;
+                    pl_frame = player_movement_timer / 3 % 4;
+                }
+            }
+            else
+            {
+                pl_state = 2;
+                if (player_vel.y < -1)
+                    pl_frame = 0;
+                else if (player_vel.y < -0.5f)
+                    pl_frame = 1;
+                else if (player_vel.y < 0)
+                    pl_frame = 2;
+                else if (player_vel.y < 0.5f)
+                    pl_frame = 3;
+                else
+                    pl_frame = 4;
+            }
+
+            DrawRect(player_pos - player_sprite_size / 2 + ivec2(0,-2), ivec2(player_sprite_size), {ivec2(0, 240) + ivec2(pl_frame, pl_state) * player_sprite_size, 1, 1, player_facing_left});
+
+        }
+
+        // Frames above the player.
+        for (; frame_index < frames.size(); frame_index++)
+        {
+            frames[frame_index].Render();
         }
     }
 };
@@ -329,12 +594,26 @@ World::~World() = default;
 
 void World::Tick()
 {
-    mouse.pos = mouse_pos;
+    { // Mouse.
+        mouse.pos = mouse_pos;
 
-    mouse.is_down_prev = mouse.is_down;
+        mouse.is_down_prev = mouse.is_down;
 
-    SDL_MouseButtonFlags sdl_mouse_flags = SDL_GetMouseState(nullptr, nullptr);
-    mouse.is_down = bool(sdl_mouse_flags & SDL_BUTTON_LEFT);
+        SDL_MouseButtonFlags sdl_mouse_flags = SDL_GetMouseState(nullptr, nullptr);
+        mouse.is_down = bool(sdl_mouse_flags & SDL_BUTTON_LEFT);
+    }
+
+    { // Keys.
+        const bool *held_keys = SDL_GetKeyboardState(nullptr);
+
+        keys.left .is_down_prev = keys.left .is_down;
+        keys.right.is_down_prev = keys.right.is_down;
+        keys.jump .is_down_prev = keys.jump .is_down;
+
+        keys.left.is_down  = held_keys[SDL_SCANCODE_LEFT ] || held_keys[SDL_SCANCODE_A];
+        keys.right.is_down = held_keys[SDL_SCANCODE_RIGHT] || held_keys[SDL_SCANCODE_D];
+        keys.jump.is_down  = held_keys[SDL_SCANCODE_UP   ] || held_keys[SDL_SCANCODE_W] || held_keys[SDL_SCANCODE_SPACE] || held_keys[SDL_SCANCODE_Z] || held_keys[SDL_SCANCODE_J];
+    }
 
     state->Tick();
 }

@@ -19,7 +19,7 @@
             ],
             "env": [/*<ENV_JSON_ARR>*/],
             "enableAutoVariableSummaries": true,
-            // "enableSyntheticChildDebugging": true, // Causes bad output for some standard containers?
+            "enableSyntheticChildDebugging": true
             // "disableASLR": false, // For debugging in docker.
         },
         {

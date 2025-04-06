@@ -12,9 +12,11 @@ struct DrawSettings
     ivec2 tex_pos;
     fvec3 factors;
 
+    bool flip_x = false;
+
     // Low level, mixed texture and color.
-    DrawSettings(ivec2 tex_pos, fvec4 color, float mix_tex, float mix_tex_alpha, float beta = 1)
-        : color(color), tex_pos(tex_pos), factors(mix_tex, mix_tex_alpha, beta)
+    DrawSettings(ivec2 tex_pos, fvec4 color, float mix_tex, float mix_tex_alpha, float beta = 1, bool flip_x = false)
+        : color(color), tex_pos(tex_pos), factors(mix_tex, mix_tex_alpha, beta), flip_x(flip_x)
     {}
 
     // Only color.
@@ -23,8 +25,8 @@ struct DrawSettings
     {}
 
     // Only texture.
-    DrawSettings(ivec2 tex_pos, float alpha = 1, float beta = 1)
-        : DrawSettings(tex_pos, fvec4(0), 1, alpha, beta)
+    DrawSettings(ivec2 tex_pos, float alpha = 1, float beta = 1, bool flip_x = false)
+        : DrawSettings(tex_pos, fvec4(0), 1, alpha, beta, flip_x)
     {}
 
 };
