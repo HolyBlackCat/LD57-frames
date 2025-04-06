@@ -284,11 +284,11 @@ struct Tutorial
 {
     bool explaining_drag = true;
     bool explaining_move = true;
-    bool explaining_reset = true;
+    bool explaining_reset_by_drag = true;
 
     float drag_timer = 0;
     float move_timer = 0;
-    float reset_timer = 0;
+    float reset_by_drag_timer = 0;
 
     bool dragged_at_least_once = false;
 };
@@ -404,7 +404,14 @@ struct World::State
 
     void Tick()
     {
-        static constexpr ivec2 player_hitbox[] = {
+        static constexpr ivec2 player_hitbox_corners[] = {
+            ivec2(-4, -3),
+            ivec2( 3, -3),
+            ivec2(-4, 7),
+            ivec2( 3, 7),
+        };
+
+        static constexpr ivec2 player_hitbox_full[] = {
             ivec2(-4, -3),
             ivec2(-3, -3),
             ivec2(-2, -3),
@@ -423,7 +430,6 @@ struct World::State
             ivec2( 2, 7),
             ivec2( 3, 7),
 
-            ivec2(-4, -3),
             ivec2(-4, -2),
             ivec2(-4, -1),
             ivec2(-4,  0),
@@ -433,9 +439,7 @@ struct World::State
             ivec2(-4,  4),
             ivec2(-4,  5),
             ivec2(-4,  6),
-            ivec2(-4,  7),
 
-            ivec2(3, -3),
             ivec2(3, -2),
             ivec2(3, -1),
             ivec2(3,  0),
@@ -445,7 +449,6 @@ struct World::State
             ivec2(3,  4),
             ivec2(3,  5),
             ivec2(3,  6),
-            ivec2(3,  7),
         };
 
         { // Particles.
@@ -498,6 +501,24 @@ struct World::State
             }
         }
 
+        { // Clicking a frame during movement kills the player and restarts the level.
+            if (movement_started && mouse.IsPressed() && !winning_fade_out)
+            {
+                for (const Frame &frame : frames) EM_NAMED_LOOP(outer)
+                {
+                    for (ivec2 point : player_hitbox_corners)
+                    {
+                        if (frame.WorldPixelIsInRect(player.pos + point))
+                        {
+                            player.exists = false;
+                            tut.explaining_reset_by_drag = false; // Remove the tutorial message as well.
+                            EM_BREAK(outer);
+                        }
+                    }
+                }
+            }
+        }
+
 
         std::size_t hovered_frame_index = std::size_t(-1);
 
@@ -509,7 +530,7 @@ struct World::State
             while (i-- > 0)
             {
                 Frame &frame = frames[i];
-                if (!found && !movement_started && (frame.dragged || (!reset_button_hovered && frame.WorldPixelIsInRect(mouse.pos))))
+                if (!found && /* !movement_started &&*/ (frame.dragged || (!reset_button_hovered && frame.WorldPixelIsInRect(mouse.pos) && !winning_fade_out)))
                 {
                     found = true;
                     frame.hovered = true;
@@ -555,7 +576,7 @@ struct World::State
 
         { // Dragging.
             // Start drag.
-            if (mouse.IsPressed() && hovered_frame_index != std::size_t(-1))
+            if (mouse.IsPressed() && hovered_frame_index != std::size_t(-1) && !winning_fade_out)
             {
                 // Move the activated frame to the end.
                 std::rotate(frames.begin() + std::ptrdiff_t(hovered_frame_index), frames.begin() + std::ptrdiff_t(hovered_frame_index) + 1, frames.end());
@@ -573,7 +594,7 @@ struct World::State
             }
 
             // Finish drag.
-            if ((!mouse.is_down || movement_started) && any_frame_dragged)
+            if ((!mouse.is_down || winning_fade_out || (movement_started && player.exists)) && any_frame_dragged)
             {
                 frames.back().dragged = false;
             }
@@ -608,7 +629,7 @@ struct World::State
                 if (!movement_started)
                     frame.player_is_under_this_frame = false;
 
-                for (ivec2 point : player_hitbox)
+                for (ivec2 point : player_hitbox_corners)
                 {
                     if (frame.WorldPixelIsInRect(player.pos + point))
                     {
@@ -707,7 +728,7 @@ struct World::State
             {
                 bool ret = false;
 
-                for (ivec2 point : player_hitbox)
+                for (ivec2 point : player_hitbox_full)
                 {
                     bool found_aabb_overlap = false;
 
@@ -888,9 +909,6 @@ struct World::State
         {
             audio.Play("death"_sound, player.pos, 1, RandFloat11() * 0.1f);
 
-            // Do this on any death, not only on clicking reset.
-            tut.explaining_reset = false;
-
             for (int i = 0; i < 64; i++)
             {
                 float a1 = RandAngle();
@@ -995,24 +1013,18 @@ struct World::State
                     tut.move_timer = 0;
             }
 
-            if (tut.explaining_reset && movement_started)
+            if (tut.explaining_reset_by_drag && movement_started)
             {
-                tut.reset_timer += step;
-                if (tut.reset_timer > 1)
-                    tut.reset_timer = 1;
+                tut.reset_by_drag_timer += step;
+                if (tut.reset_by_drag_timer > 1)
+                    tut.reset_by_drag_timer = 1;
             }
             else
             {
-                tut.reset_timer -= step;
-                if (tut.reset_timer < 0)
-                    tut.reset_timer = 0;
+                tut.reset_by_drag_timer -= step;
+                if (tut.reset_by_drag_timer < 0)
+                    tut.reset_by_drag_timer = 0;
             }
-        }
-
-        { // Hints.
-            // If the player keeps clicking after starting to move, show them the tutorial again.
-            if (movement_started && !reset_button_hovered && mouse.IsPressed())
-                tut.explaining_reset = true;
         }
 
         { // Background movement.
@@ -1126,7 +1138,7 @@ struct World::State
                 DrawRect(ivec2(-text_size.x / 2, screen_size.y / 2 - text_size.y) - ivec2(0, text_size.y * 2), text_size, {ivec2(0, 352 + text_size.y * 0), t});
             if (float t = MapTimer(tut.move_timer); t > 0.001f)
                 DrawRect(ivec2(-text_size.x / 2, screen_size.y / 2 - text_size.y) - ivec2(0, text_size.y * 1), text_size, {ivec2(0, 352 + text_size.y * 1), t});
-            if (float t = MapTimer(tut.reset_timer); t > 0.001f)
+            if (float t = MapTimer(tut.reset_by_drag_timer); t > 0.001f)
                 DrawRect(ivec2(-text_size.x / 2, screen_size.y / 2 - text_size.y) - ivec2(0, text_size.y * 0), text_size, {ivec2(0, 352 + text_size.y * 2), t});
         }
 
