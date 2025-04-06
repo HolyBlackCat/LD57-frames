@@ -118,7 +118,20 @@ namespace Frames
             "-----",
             "--1--",
             "-###-",
-        });
+        }),
+        box(ivec2(10,0), {
+            "-###-",
+            "-#1#-",
+            "-###-",
+            "#####",
+        }),
+        desert(ivec2(15,0), {
+            "---",
+            "---",
+            "-1-",
+            "###",
+        })
+        ;
 }
 
 enum class SpawnedEntity
@@ -273,8 +286,8 @@ static const std::vector<Level> levels = {
     {
         1,
         {
-            Frame(Frames::flower_island, ivec2(-50, 20), SpawnedEntity::player),
-            Frame(Frames::vortex, ivec2(70, -20), SpawnedEntity::exit),
+            Frame(Frames::desert, ivec2(-50, -20), SpawnedEntity::player),
+            Frame(Frames::box, ivec2(70, 20), SpawnedEntity::exit),
         }
     }
 };
@@ -621,6 +634,7 @@ struct World::State
             }
         }
 
+        bool player_touches_any_frame = false;
         { // Update AABB overlap flags for frames.
             bool no_movement_and_found_player_frame = false;
             for (Frame &frame : frames)
@@ -634,6 +648,7 @@ struct World::State
                     if (frame.WorldPixelIsInRect(player.pos + point))
                     {
                         frame.aabb_overlaps_player = true;
+                        player_touches_any_frame = true;
 
                         if (no_movement_and_found_player_frame)
                             frame.player_is_under_this_frame = true;
@@ -746,7 +761,7 @@ struct World::State
 
                             if (r == 1)
                             {
-                                if (!frame.aabb_overlaps_player && update_frames)
+                                if (!frame.aabb_overlaps_player && player_touches_any_frame && update_frames)
                                 {
                                     frame.player_is_under_this_frame = true;
                                 }
