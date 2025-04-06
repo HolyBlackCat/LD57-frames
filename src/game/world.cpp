@@ -71,6 +71,9 @@ struct Keys
 };
 static Keys keys;
 
+// This is reset when the level is restarted. And this doesn't tick while we're in edit mode.
+static int global_tick_counter_during_movement = 0;
+
 
 struct FrameType
 {
@@ -113,7 +116,7 @@ namespace Frames
         vortex(ivec2(5,0), {
             "-----",
             "-----",
-            "-----",
+            "--1--",
             "-###-",
         });
 }
@@ -122,6 +125,7 @@ enum class SpawnedEntity
 {
     none,
     player,
+    exit,
 };
 
 struct Frame
@@ -150,6 +154,10 @@ struct Frame
 
     // Ignore collisions because the player got under this frame.
     bool player_is_under_this_frame = false;
+
+
+    // If have an exit on this frame, this is its coordinates relative to the frame.
+    std::optional<ivec2> exit_pos;
 
 
     Frame(const FrameType &type, ivec2 pos, SpawnedEntity spawned_entity_type = SpawnedEntity::none)
@@ -210,6 +218,14 @@ struct Frame
         // The frame.
         DrawRectHollow(corner_pos, pixel_size, 1, fvec4(0,0,0,under_alpha));
 
+        { // Entities!
+            if (exit_pos)
+            {
+                static constexpr int exit_sprite_size = 32;
+                DrawRect(pos + *exit_pos - exit_sprite_size/2, ivec2(exit_sprite_size), {ivec2(global_tick_counter_during_movement / 6 % 4 * exit_sprite_size, 288), under_alpha});
+            }
+        }
+
         // Hover indicator.
         if (hovered)
             DrawRectHollow(corner_pos + 1, pixel_size - 2, 1, fvec4(1,1,1,1));
@@ -250,8 +266,15 @@ static const std::vector<Level> levels = {
     {
         0,
         {
-            Frame(Frames::flower_island, ivec2(0,0), SpawnedEntity::player),
-            Frame(Frames::vortex, ivec2(100,0)),
+            Frame(Frames::flower_island, ivec2(-50, 20), SpawnedEntity::player),
+            Frame(Frames::vortex, ivec2(70, -20), SpawnedEntity::exit),
+        }
+    },
+    {
+        1,
+        {
+            Frame(Frames::flower_island, ivec2(-50, 20), SpawnedEntity::player),
+            Frame(Frames::vortex, ivec2(70, -20), SpawnedEntity::exit),
         }
     }
 };
@@ -279,8 +302,8 @@ struct World::State
     std::size_t current_level_index = 0;
 
 
-    bool fading_out = false;
     float fade = 1;
+    bool winning_fade_out = false;
 
 
     struct Player
@@ -303,6 +326,7 @@ struct World::State
 
 
     bool movement_started = false;
+    int background_movement_timer = 0;
 
     std::deque<Particle> particles;
 
@@ -313,8 +337,7 @@ struct World::State
 
     State()
     {
-        frames = levels.at(current_level_index).frames;
-        InitEntitiesFromFrames();
+        LoadLevelData();
     }
 
     void InitEntityFromSpecificFrame(Frame &frame)
@@ -346,6 +369,9 @@ struct World::State
                 player.exists = true;
                 player.pos = frame.pos + frame.offset_to_spawned_entity;
                 break;
+              case SpawnedEntity::exit:
+                frame.exit_pos = frame.offset_to_spawned_entity;
+                break;
             }
         }
     }
@@ -354,6 +380,19 @@ struct World::State
     {
         for (Frame &frame : frames)
             InitEntityFromSpecificFrame(frame);
+    }
+
+    void LoadLevelData()
+    {
+        frames = levels.at(current_level_index).frames;
+
+        movement_started = false;
+        player = {};
+
+        InitEntitiesFromFrames();
+
+        fade = 1;
+        winning_fade_out = false;
     }
 
     void RestartLevel()
@@ -590,6 +629,37 @@ struct World::State
             }
         }
 
+
+
+        { // Player to frame entity interactions. This is before player movement, this looks better.
+            if (movement_started && player.exists)
+            {
+                for (Frame &frame : frames)
+                {
+                    if (frame.player_is_under_this_frame)
+                        continue; // This disables the interactions.
+
+                    // Exit?
+                    if (frame.exit_pos)
+                    {
+                        static constexpr ivec2 exit_hitbox_size(4);
+
+                        ivec2 exit_world_pos = frame.pos + *frame.exit_pos;
+
+                        ivec2 dist = (exit_world_pos - player.pos).map(EM_FUNC(std::abs));
+                        if (dist.x < exit_hitbox_size.x && dist.y < exit_hitbox_size.y)
+                        {
+                            frame.exit_pos = {};
+                            audio.Play("win"_sound, exit_world_pos, 1, RandFloat11() * 0.2f);
+                            player.exists = false;
+                            winning_fade_out = true;
+                        }
+                    }
+                }
+            }
+        }
+
+
         // Player.
         if (player.exists)
         {
@@ -607,6 +677,8 @@ struct World::State
             // Horizontal control.
             if (hc)
             {
+                if (!movement_started)
+                    audio.Play("start_moving"_sound, player.pos, 1, RandFloat11() * 0.2f);
                 movement_started = true;
 
                 player.facing_left = hc < 0;
@@ -812,9 +884,9 @@ struct World::State
         }
 
         // Player death.
-        if (!player.exists && player.exists_prev)
+        if (!player.exists && player.exists_prev && !winning_fade_out)
         {
-            audio.Play("death"_sound, player.pos);
+            audio.Play("death"_sound, player.pos, 1, RandFloat11() * 0.1f);
 
             // Do this on any death, not only on clicking reset.
             tut.explaining_reset = false;
@@ -837,28 +909,39 @@ struct World::State
         }
         player.exists_prev = player.exists;
 
-        { // Restarting on death.
+        { // Restarting on death. Also switching to the next level on win.
             if (!player.exists)
             {
                 player.death_timer++;
                 if (player.death_timer > 45)
                 {
-                    audio.Play("respawn"_sound, 1, RandFloat11() * 0.2f);
-                    RestartLevel();
-
-                    for (int i = 0; i < 16; i++)
+                    if (winning_fade_out)
                     {
-                        float a1 = RandAngle();
+                        current_level_index++;
+                        if (current_level_index >= levels.size())
+                            std::exit(0); // Oh well.
 
-                        particles.push_back(Particle(
-                            player.pos + fvec2(std::cos(a1), std::sin(a1)) * (3 + RandFloat01()),
-                            fvec2(std::cos(a1), std::sin(a1)) * (1),
-                            fvec2(),
-                            0.05f,
-                            fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(1),
-                            3,
-                            20
-                        ));
+                        LoadLevelData();
+                    }
+                    else
+                    {
+                        audio.Play("respawn"_sound, player.pos, 1, RandFloat11() * 0.2f);
+                        RestartLevel();
+
+                        for (int i = 0; i < 16; i++)
+                        {
+                            float a1 = RandAngle();
+
+                            particles.push_back(Particle(
+                                player.pos + fvec2(std::cos(a1), std::sin(a1)) * (3 + RandFloat01()),
+                                fvec2(std::cos(a1), std::sin(a1)) * (1),
+                                fvec2(),
+                                0.05f,
+                                fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(1),
+                                3,
+                                20
+                            ));
+                        }
                     }
                 }
             }
@@ -868,7 +951,7 @@ struct World::State
         { // Fade.
             static constexpr float fade_step = 0.03f;
 
-            if (fading_out)
+            if (winning_fade_out)
             {
                 fade += fade_step;
                 if (fade > 1)
@@ -931,6 +1014,19 @@ struct World::State
             if (movement_started && !reset_button_hovered && mouse.IsPressed())
                 tut.explaining_reset = true;
         }
+
+        { // Background movement.
+            if (movement_started)
+                background_movement_timer++;
+        }
+
+
+        { // Global tick counter.
+            if (movement_started)
+                global_tick_counter_during_movement++;
+            else
+                global_tick_counter_during_movement = 0;
+        }
     }
 
     void Render() const
@@ -939,9 +1035,9 @@ struct World::State
             static constexpr ivec2 bg_size(128);
             ivec2 count = (screen_size + bg_size - 1) / bg_size;
             for (int y = 0; y < count.y; y++)
-            for (int x = 0; x < count.x; x++)
+            for (int x = -1; x < count.x; x++)
             {
-                DrawRect(ivec2(x, y) * bg_size - screen_size / 2, bg_size, ivec2(0));
+                DrawRect(ivec2(x, y) * bg_size - screen_size / 2 + ivec2(background_movement_timer / 2 % bg_size.x, 0), bg_size, ivec2(bg_size.x * levels[current_level_index].bg_index, 0));
             }
         }
 
@@ -956,6 +1052,14 @@ struct World::State
                 break;
 
             frames[frame_index].Render();
+        }
+
+        { // Frame borders that are visible through other frames. Only doing this for non-transparent frames.
+            for (std::size_t i = 0; i < frame_index; i++)
+            {
+                const Frame &frame = frames[i];
+                DrawRectHollow(frame.TopLeftCorner(), frame.PixelSize(), 1, fvec4(0,0,0,0.06f));
+            }
         }
 
         // Player.
