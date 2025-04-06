@@ -3,6 +3,7 @@
 #include "SDL3/SDL_keyboard.h"
 #include "em/macros/utils/lift.h"
 #include "em/macros/utils/named_loops.h"
+#include "audio/global_sound_loader.h"
 #include "main.h"
 
 #include <SDL3/SDL_mouse.h>
@@ -12,7 +13,6 @@
 #include <string>
 
 static constexpr int tile_size = 16;
-
 
 struct Mouse
 {
@@ -197,6 +197,7 @@ struct World::State
     fvec2 player_vel;
     fvec2 player_vel_comp;
     bool player_on_ground = false;
+    bool player_on_ground_prev = false;
     bool player_facing_left = false;
     int player_movement_timer = 0;
 
@@ -380,6 +381,8 @@ struct World::State
             // Horizontal control.
             if (hc)
             {
+                movement_started = true;
+
                 player_facing_left = hc < 0;
 
                 player_vel.x += hc * walk_acc;
@@ -440,15 +443,23 @@ struct World::State
                 return ret;
             };
 
+            player_on_ground_prev = player_on_ground;
             player_on_ground = SolidAtOffset(ivec2(0, 1), false);
+
+            if (player_on_ground && !player_on_ground_prev && movement_started)
+                audio.Play("landing"_sound, player_pos);
 
 
             if (player_on_ground)
             {
                 if (keys.jump.IsPressed())
                 {
+                    movement_started = true;
+
                     player_vel.y = -3;
                     player_vel_comp.y = 0;
+
+                    audio.Play("jump"_sound, player_pos);
                 }
                 else
                 {
@@ -572,7 +583,7 @@ struct World::State
                     pl_frame = 4;
             }
 
-            DrawRect(player_pos - player_sprite_size / 2 + ivec2(0,-2), ivec2(player_sprite_size), {ivec2(0, 240) + ivec2(pl_frame, pl_state) * player_sprite_size, 1, 1, player_facing_left});
+            DrawRect(player_pos - player_sprite_size / 2 + ivec2(0,2), ivec2(player_sprite_size), {ivec2(0, 240) + ivec2(pl_frame, pl_state) * player_sprite_size, 1, 1, player_facing_left});
 
         }
 

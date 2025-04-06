@@ -1,5 +1,6 @@
 #include "main.h"
 
+#include "audio/complete.h"
 #include "em/macros/utils/finally.h"
 #include "em/macros/utils/lift.h"
 #include "em/refl/macros/structs.h"
@@ -25,10 +26,11 @@
 #include <SDL3/SDL_timer.h>
 
 #include <cstddef>
-#include <iostream>
 #include <memory>
 
 using namespace em;
+
+Audio::SourceManager audio;
 
 Gpu::Texture LoadImage(em::Gpu::Device &device, em::Gpu::CopyPass &pass, std::string_view filename)
 {
@@ -105,6 +107,8 @@ struct GameApp : App::Module
             .min_size = screen_size,
         })
     )
+
+    Audio::Context audio_context = nullptr;
 
     ShaderPair sh_main = ShaderPair(device, "main");
     ShaderPair sh_upscale = ShaderPair(device, "upscale");
@@ -215,7 +219,12 @@ struct GameApp : App::Module
         };
         upscale_triangle_buffer = Gpu::Buffer(device, pass, {reinterpret_cast<const unsigned char *>(upscale_triangle_verts), sizeof(upscale_triangle_verts)});
 
+        Audio::GlobalData::Load(Audio::mono, Audio::wav, fmt::format("{}assets/sounds/", Filesystem::GetResourceDir()));
 
+        float audio_distance = screen_size.x * 3;
+        Audio::ListenerPosition(fvec3(0, 0, -audio_distance));
+        Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
+        Audio::Source::DefaultRefDistance(audio_distance);
     }
 
     Metronome metronome = Metronome(60);
@@ -283,6 +292,12 @@ struct GameApp : App::Module
                 FixedTick();
         }
 
+        { // Audio.
+            audio.Tick();
+
+            Audio::CheckErrors();
+        }
+
         { // Update frame counter and FPS.
             frame_counter++;
             std::uint64_t this_second = SDL_GetTicks() / 1000;
@@ -297,7 +312,7 @@ struct GameApp : App::Module
                 tick_counter_prev = tick_counter;
 
                 static std::string base_title = SDL_GetWindowTitle(window.Handle());
-                std::string new_title = fmt::format("{}    FPS: {}  TPS: {}", base_title, fps, tps);
+                std::string new_title = fmt::format("{}    FPS: {}  TPS: {}  SOUNDS: {}", base_title, fps, tps, audio.ActiveSources());
                 SDL_SetWindowTitle(window.Handle(), new_title.c_str());
             }
         }

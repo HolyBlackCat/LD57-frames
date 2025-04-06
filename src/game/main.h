@@ -1,10 +1,13 @@
 #pragma once
 
 #include "em/math/vector.h"
+#include "audio/source_manager.h"
 
 using namespace em;
 
 static constexpr ivec2 screen_size = ivec2(1920, 1080) / 4;
+
+extern Audio::SourceManager audio;
 
 struct DrawSettings
 {

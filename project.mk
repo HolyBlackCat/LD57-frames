@@ -92,15 +92,6 @@ assets/%.frag.spv: assets/%.frag.glsl
 _win_is_x32 :=
 _win_sdl3_arch := $(if $(_win_is_x32),i686-w64-mingw32,x86_64-w64-mingw32)
 
-# Disable unnecessary stuff.
-
-_openal_flags := -DALSOFT_EXAMPLES=FALSE
-# Disable helper executables. Otherwise Windows builds fails because of missing Qt.
-_openal_flags += -DALSOFT_UTILS=FALSE
-# Enable SDL2 backend.
-_openal_flags += -DALSOFT_REQUIRE_SDL2=TRUE -DALSOFT_BACKEND_SDL2=TRUE
-# We used to disable other backends here, but it seems our CMake isolation works well enough to make this unnecessary.
-
 
 # # When you update this, check if they added installation rules for headers.
 # # To generate the new archive filename when updating (commit hash and date), you can use the comment at the beginning of our `box2cpp.h`.
@@ -134,6 +125,15 @@ $(call Library,fmt,https://github.com/fmtlib/fmt/releases/download/11.1.4/fmt-11
 #   $(call LibrarySetting,deps,zlib)
 # endif
 
+
+# Using a commit directly from `master` because new CMake chokes on release 1.24.3.
+$(call Library,openal_soft,https://github.com/kcat/openal-soft/archive/aeeedd432ce812e9576c89ebfe94f7d2d5e4a880.zip)
+  # I think AL can also utlize zlib, but we don't build zlib for now, and it's not clear what it gives AL anyway.
+  $(call LibrarySetting,deps,sdl3)
+  # `ALSOFT_UTILS=FALSE` disables helper executables. Otherwise Windows builds fail because of missing Qt.
+  # We used to disable other backends here, but it seems our CMake isolation should make this unnecessary.
+  $(call LibrarySetting,cmake_flags,-DALSOFT_EXAMPLES=FALSE -DALSOFT_UTILS=FALSE -DALSOFT_REQUIRE_SDL3=TRUE -DALSOFT_BACKEND_SDL3=TRUE)
+
 # $(call Library,phmap,parallel-hashmap-1.4.0.tar.gz)
 #   $(call LibrarySetting,cmake_flags,-DPHMAP_BUILD_TESTS=OFF -DPHMAP_BUILD_EXAMPLES=OFF)# Otherwise it downloads GTest, which is nonsense.
 
@@ -165,10 +165,9 @@ $(call Library,spirv_cross,https://github.com/KhronosGroup/SPIRV-Cross/archive/1
   # Disabling CLI tools because we don't need them and because they need static libs.
   $(call LibrarySetting,cmake_flags,-DSPIRV_CROSS_ENABLE_TESTS=OFF -DSPIRV_CROSS_SHARED=ON -DSPIRV_CROSS_STATIC=OFF -DSPIRV_CROSS_CLI=OFF)
 
-$(call Library,spirv_reflect,https://github.com/KhronosGroup/SPIRV-Reflect/archive/c637858562fbce1b6f5dc7ca48d4e8a5bd117b70.zip)
-  # Disable the executable and enable the library. They only support a static library, whatever.
-  $(call LibrarySetting,cmake_flags,-DSPIRV_REFLECT_EXECUTABLE=OFF -DSPIRV_REFLECT_STATIC_LIB=ON)
-  $(call LibrarySetting,install_files,spirv_reflect.h->include)
+# $(call Library,spirv_reflect,https://github.com/KhronosGroup/SPIRV-Reflect/archive/c6c0f5c9796bdef40c55065d82e0df67c38a29a4.zip)
+#   # Disable the executable and enable the library. They only support a static library, whatever.
+#   $(call LibrarySetting,cmake_flags,-DSPIRV_REFLECT_EXECUTABLE=OFF -DSPIRV_REFLECT_STATIC_LIB=ON)
 
 
 $(call Library,stb,https://github.com/nothings/stb/archive/f0569113c93ad095470c54bf34a17b36646bbbb5.zip)
@@ -176,3 +175,16 @@ $(call Library,stb,https://github.com/nothings/stb/archive/f0569113c93ad095470c5
   # Out of those, `rectpack` is used both by us and ImGui.
   # There's also `textedit`, which ImGui uses and we don't but we let ImGui keep its version, since it's slightly patched.
   $(call LibrarySetting,install_files,*.h->include)
+
+
+
+
+$(call Library,ogg,https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz) # Only serves as a dependency for `libvorbis`.
+  # When built with CMake on MinGW, ogg/vorbis can't decide whether to prefix the libraries with `lib` or not.
+  # The resulting executable doesn't find libraries because of this inconsistency.
+  $(call LibrarySetting,build_system,configure_make)
+
+$(call Library,vorbis,https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz)
+  $(call LibrarySetting,deps,ogg)
+  # See ogg for why we use configure+make.
+  $(call LibrarySetting,build_system,configure_make)

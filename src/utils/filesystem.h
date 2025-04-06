@@ -86,7 +86,10 @@ namespace em::Filesystem
 
         // There's also a null terminator not included in here.
         // This is zeroed by default.
-        Meta::ZeroMovedFrom<std::size_t> size;
+        Meta::ZeroMovedFrom<std::size_t> data_size;
+
+        // A file name for the user.
+        Meta::ZeroMovedFrom<std::string> name;
 
       public:
         constexpr LoadedFile() {}
@@ -96,8 +99,16 @@ namespace em::Filesystem
 
         [[nodiscard]] explicit operator bool() const {return bool(ptr);}
 
-        [[nodiscard]] operator std::span<const unsigned char>() const {return {ptr.get(), size.value};}
-        [[nodiscard]] operator zstring_view() const {return zstring_view(zstring_view::TrustSpecifiedSize{}, {reinterpret_cast<const char *>(ptr.get()), size.value});}
+        [[nodiscard]] const std::string &GetName() const {return name.value;}
+
+        [[nodiscard]] const unsigned char *data() const {return ptr.get();}
+        [[nodiscard]] std::size_t size() const {return data_size.value;}
+
+        [[nodiscard]] const unsigned char *begin() const {return data();}
+        [[nodiscard]] const unsigned char *end() const {return data() + size();}
+
+        [[nodiscard]] operator std::span<const unsigned char>() const {return {ptr.get(), data_size.value};}
+        [[nodiscard]] operator zstring_view() const {return zstring_view(zstring_view::TrustSpecifiedSize{}, {reinterpret_cast<const char *>(ptr.get()), data_size.value});}
         // This doesn't work automatically in some cases because the compiler refuses to consider more than one user-defined conversion at the same time.
         [[nodiscard]] operator std::string_view() const {return operator zstring_view();}
     };
