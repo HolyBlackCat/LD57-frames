@@ -3,7 +3,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include <exception>
 #include <mutex>
 #include <thread>
 

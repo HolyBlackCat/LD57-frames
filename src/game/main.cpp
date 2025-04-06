@@ -225,6 +225,9 @@ struct GameApp : App::Module
         Audio::ListenerPosition(fvec3(0, 0, -audio_distance));
         Audio::ListenerOrientation(fvec3(0,0,1), fvec3(0,-1,0));
         Audio::Source::DefaultRefDistance(audio_distance);
+
+        if (is_fullscreen)
+            SDL_SetWindowFullscreen(window.Handle(), true);
     }
 
     Metronome metronome = Metronome(60);
@@ -241,8 +244,30 @@ struct GameApp : App::Module
     Gpu::RenderPass *main_pass = nullptr;
     Gpu::CopyPass *queue_copy_pass = nullptr;
 
+    // For alt+enter.
+    bool enter_held_prev = false;
+    #ifdef NDEBUG
+    bool is_fullscreen = true;
+    #else
+    bool is_fullscreen = false;
+    #endif
+
     void FixedTick()
     {
+        { // Alt+Enter?
+            const bool *held_keys = SDL_GetKeyboardState(nullptr);
+            bool alt_held = held_keys[SDL_SCANCODE_LALT] || held_keys[SDL_SCANCODE_RALT];
+            bool enter_held = held_keys[SDL_SCANCODE_RETURN];
+
+            if (alt_held && enter_held && !enter_held_prev)
+            {
+                is_fullscreen = !is_fullscreen;
+                SDL_SetWindowFullscreen(window.Handle(), is_fullscreen);
+            }
+
+            enter_held_prev = enter_held;
+        }
+
         world.Tick();
         tick_counter++;
     }

@@ -13,7 +13,6 @@
 #include <cmath>
 #include <deque>
 #include <random>
-#include <set>
 #include <string>
 
 static constexpr int tile_size = 16;
@@ -167,6 +166,18 @@ namespace Frames
             "---",
             "###",
             "#-#",
+        }),
+        snek(ivec2(27,8), {
+            "#1###3#",
+            "###2###",
+        }),
+        staff(ivec2(27,10), {
+            "#####-",
+            "----##",
+        }),
+        stars(ivec2(19,7), {
+            "--",
+            "--",
         })
         ;
 }
@@ -177,6 +188,7 @@ enum class SpawnedEntity
     none,
     player,
     exit,
+    key,
 };
 
 struct Frame
@@ -203,8 +215,11 @@ struct Frame
     bool player_is_under_this_frame = false;
 
 
-    // If have an exit on this frame, this is its coordinates relative to the frame.
+    // If have an exit on this frame, this is its coordinates relative to `pos`.
     std::optional<ivec2> exit_pos;
+
+    // The key positions that haven't been picked up yet. In pixels relative to `pos`.
+    std::vector<ivec2> key_positions;
 
 
     Frame(const FrameType &type, ivec2 pos, std::vector<SpawnedEntity> spawned_entity_types = {})
@@ -245,7 +260,7 @@ struct Frame
         return type->tiles.at(std::size_t(coord.y)).at(std::size_t(coord.x)) == '#';
     }
 
-    void Render() const
+    void Render(int num_remaining_keys) const
     {
         ivec2 corner_pos = TopLeftCorner();
         ivec2 pixel_size = PixelSize();
@@ -266,10 +281,18 @@ struct Frame
         DrawRectHollow(corner_pos, pixel_size, 1, fvec4(0,0,0,under_alpha));
 
         { // Entities!
+            // Exit.
             if (exit_pos)
             {
                 static constexpr int exit_sprite_size = 32;
-                DrawRect(pos + *exit_pos - exit_sprite_size/2, ivec2(exit_sprite_size), {ivec2(global_tick_counter_during_movement / 6 % 4 * exit_sprite_size, 288), under_alpha});
+                DrawRect(pos + *exit_pos - exit_sprite_size/2, ivec2(exit_sprite_size), {ivec2((num_remaining_keys == 0 ? global_tick_counter_during_movement / 6 % 4 : 4) * exit_sprite_size, 288), under_alpha});
+            }
+
+            // Keys.
+            for (ivec2 key_pos : key_positions)
+            {
+                static constexpr int key_sprite_size = 16;
+                DrawRect(pos + key_pos - key_sprite_size/2, ivec2(key_sprite_size), {ivec2(64 + global_tick_counter_during_movement / 30 % 2 * key_sprite_size, 320), under_alpha});
             }
         }
 
@@ -340,6 +363,14 @@ static const std::vector<Level> levels = {
             Frame(Frames::vert_glass_tube, ivec2(80, 0)),
         }
     },
+    {
+        4, ivec2(0,-1),
+        {
+            Frame(Frames::snek, ivec2(0, 40), {SpawnedEntity::player, SpawnedEntity::key, SpawnedEntity::exit}),
+            Frame(Frames::staff, ivec2(-30, -40)),
+            Frame(Frames::stars, ivec2(60, -40)),
+        }
+    },
 };
 
 
@@ -398,6 +429,8 @@ struct World::State
     bool reset_button_hovered = false;
     float reset_button_vis_timer = 0;
 
+    int num_remaining_keys = 0;
+
     State()
     {
         LoadLevelData();
@@ -405,6 +438,8 @@ struct World::State
 
     void InitEntityFromSpecificFrame(Frame &frame)
     {
+        frame.key_positions.clear();
+
         char ch = '1';
         for (SpawnedEntity e : frame.spawned_entity_types)
         {
@@ -437,6 +472,9 @@ struct World::State
               case SpawnedEntity::exit:
                 frame.exit_pos = offset_to_spawned_entity;
                 break;
+              case SpawnedEntity::key:
+                frame.key_positions.push_back(offset_to_spawned_entity);
+                break;
             }
 
             ch++;
@@ -460,6 +498,7 @@ struct World::State
 
         fade = 1;
         winning_fade_out = false;
+        particles.clear();
     }
 
     void RestartLevel()
@@ -573,14 +612,11 @@ struct World::State
             {
                 for (const Frame &frame : frames) EM_NAMED_LOOP(outer)
                 {
-                    for (ivec2 point : player_hitbox_corners)
+                    if (frame.WorldPixelIsInRect(mouse.pos))
                     {
-                        if (frame.WorldPixelIsInRect(player.pos + point))
-                        {
-                            player.exists = false;
-                            tut.explaining_reset_by_drag = false; // Remove the tutorial message as well.
-                            EM_BREAK(outer);
-                        }
+                        player.exists = false;
+                        tut.explaining_reset_by_drag = false; // Remove the tutorial message as well.
+                        EM_BREAK(outer);
                     }
                 }
             }
@@ -658,12 +694,16 @@ struct World::State
 
 
                 tut.dragged_at_least_once = true;
+
+                audio.Play("drag"_sound, mouse.pos, 1, RandFloat11() * 0.2f);
             }
 
             // Finish drag.
             if ((!mouse.is_down || winning_fade_out || (movement_started && player.exists)) && any_frame_dragged)
             {
                 frames.back().dragged = false;
+
+                audio.Play("drag"_sound, mouse.pos, 1, RandFloat11() * 0.2f);
             }
 
             // Continue drag.
@@ -688,9 +728,10 @@ struct World::State
             }
         }
 
-        bool player_touches_any_frame = false;
+        std::optional<std::size_t> topmost_touched_frame;
         { // Update AABB overlap flags for frames.
             bool no_movement_and_found_player_frame = false;
+            std::size_t i = 0;
             for (Frame &frame : frames)
             {
                 frame.aabb_overlaps_player = false;
@@ -702,7 +743,9 @@ struct World::State
                     if (frame.WorldPixelIsInRect(player.pos + point))
                     {
                         frame.aabb_overlaps_player = true;
-                        player_touches_any_frame = true;
+
+                        if (!frame.player_is_under_this_frame)
+                            topmost_touched_frame = i;
 
                         if (no_movement_and_found_player_frame)
                             frame.player_is_under_this_frame = true;
@@ -720,6 +763,9 @@ struct World::State
                 // Reset the "under frame" flag if no overlap.
                 if (!frame.aabb_overlaps_player)
                     frame.player_is_under_this_frame = false;
+
+
+                i++;
             }
         }
 
@@ -739,7 +785,7 @@ struct World::State
                         continue; //
 
                     // Exit?
-                    if (frame.exit_pos)
+                    if (frame.exit_pos && num_remaining_keys == 0)
                     {
                         static constexpr ivec2 exit_hitbox_size(5);
 
@@ -752,7 +798,89 @@ struct World::State
                             audio.Play("win"_sound, exit_world_pos, 1, RandFloat11() * 0.2f);
                             player.exists = false;
                             winning_fade_out = true;
+
+                            for (int i = 0; i < 64; i++)
+                            {
+                                float a1 = RandAngle();
+
+                                particles.push_back(Particle(
+                                    exit_world_pos + fvec2(std::cos(a1), std::sin(a1)) * (RandFloat01() * 6),
+                                    fvec2(std::cos(a1), std::sin(a1)) * std::pow(RandFloat01() * 1.5f, 3.f),
+                                    fvec2(),
+                                    0.09f,
+                                    fvec4(1, 0.5f + 0.25f * RandFloat01(), 0, RandFloat01()),
+                                    2,
+                                    90
+                                ));
+                            }
                         }
+                    }
+
+                    // Keys?
+                    for (auto it = frame.key_positions.begin(); it != frame.key_positions.end();)
+                    {
+                        static constexpr ivec2 key_hitbox_size(5);
+
+                        ivec2 key_world_pos = frame.pos + *it;
+
+                        ivec2 dist = (key_world_pos - player.pos).map(EM_FUNC(std::abs));
+                        if (dist.x < key_hitbox_size.x && dist.y < key_hitbox_size.y)
+                        {
+                            audio.Play("key_collected"_sound, key_world_pos, 1, RandFloat11() * 0.2f);
+
+                            // Particles on key.
+                            for (int i = 0; i < 5; i++)
+                            {
+                                float a1 = RandAngle();
+
+                                particles.push_back(Particle(
+                                    key_world_pos + fvec2(std::cos(a1), std::sin(a1)) * (RandFloat01() * 6),
+                                    fvec2(std::cos(a1), std::sin(a1)) * std::pow(RandFloat01() * 1.5f, 2.f),
+                                    fvec2(),
+                                    0.09f,
+                                    fvec4(1, 0.5f + 0.25f * RandFloat01(), 0, RandFloat01()),
+                                    2,
+                                    60
+                                ));
+                            }
+
+                            // Particles on exit if it has just spawned.
+                            if (num_remaining_keys == 1)
+                            {
+                                // Find the exit position.
+                                std::optional<ivec2> exit_world_pos;
+                                for (const Frame &f : frames)
+                                {
+                                    if (f.exit_pos)
+                                    {
+                                        exit_world_pos = f.pos + *f.exit_pos;
+                                    }
+                                }
+
+                                if (exit_world_pos)
+                                {
+                                    for (int i = 0; i < 20; i++)
+                                    {
+                                        float a1 = RandAngle();
+
+                                        particles.push_back(Particle(
+                                            *exit_world_pos + fvec2(std::cos(a1), std::sin(a1)) * (RandFloat01() * 6),
+                                            fvec2(std::cos(a1), std::sin(a1)) * std::pow(RandFloat01() * 1.5f, 2.f),
+                                            fvec2(),
+                                            0.09f,
+                                            fvec4(1, 0.5f + 0.25f * RandFloat01(), 0, RandFloat01()),
+                                            3,
+                                            90
+                                        ));
+                                    }
+                                }
+                            }
+
+                            it = frame.key_positions.erase(it);
+                            continue;
+                        }
+
+                        ++it;
                     }
 
                     // Only interacting with the topmost frame.
@@ -761,6 +889,14 @@ struct World::State
             }
         }
 
+        { // Check if all keys are collected.
+            num_remaining_keys = 0;
+            for (const Frame &frame : frames)
+            {
+                if (!frame.key_positions.empty())
+                    num_remaining_keys++;
+            }
+        }
 
         // Player.
         if (player.exists)
@@ -769,7 +905,7 @@ struct World::State
                 walk_speed = 1.5f,
                 walk_acc = 0.4f,
                 walk_dec = 0.4f,
-                gravity = 0.14f,
+                gravity = 0.13f,
                 gravity_lowjump = 0.24f,
                 max_fall_speed = 4
                 ;
@@ -829,7 +965,7 @@ struct World::State
 
                             if (r == 1)
                             {
-                                if (!frame.aabb_overlaps_player && player_touches_any_frame && update_frames)
+                                if (!frame.aabb_overlaps_player && topmost_touched_frame && *topmost_touched_frame < i && update_frames)
                                 {
                                     frame.player_is_under_this_frame = true;
                                 }
@@ -910,13 +1046,13 @@ struct World::State
             {
                 if (!keys.jump.is_down || player.vel.y > 0)
                     player.holding_jump = false;
+            }
 
-                if (movement_started)
-                {
-                    player.vel.y += player.holding_jump ? gravity : gravity_lowjump;
-                    if (player.vel.y > max_fall_speed)
-                        player.vel.y = max_fall_speed;
-                }
+            if (movement_started)
+            {
+                player.vel.y += player.holding_jump ? gravity : gravity_lowjump;
+                if (player.vel.y > max_fall_speed)
+                    player.vel.y = max_fall_speed;
             }
 
 
@@ -999,7 +1135,7 @@ struct World::State
 
                 particles.push_back(Particle(
                     player.pos + fvec2(std::cos(a1), std::sin(a1)) * (RandFloat01() * 6),
-                    fvec2(std::cos(a2), std::sin(a2)) * (RandFloat01() * 2.f),
+                    fvec2(std::cos(a2), std::sin(a2)) * std::pow(RandFloat01() * 2.f, 1.5f),
                     fvec2(),
                     0.01f,
                     fvec3(0.6f + RandFloat01() * 0.4f).to_vec4(0.5f + RandFloat01() * 0.5f),
@@ -1128,11 +1264,14 @@ struct World::State
     {
         { // Background.
             static constexpr ivec2 bg_size(128);
+
+            ivec2 vel = levels[current_level_index].bg_movement_dir;
+
             ivec2 count = (screen_size + bg_size - 1) / bg_size;
-            for (int y = -1; y < count.y; y++)
-            for (int x = -1; x < count.x; x++)
+            for (int y = -(vel.y > 0); y < count.y + (vel.y < 0); y++)
+            for (int x = -(vel.x > 0); x < count.x + (vel.x < 0); x++)
             {
-                DrawRect(ivec2(x, y) * bg_size - screen_size / 2 + levels[current_level_index].bg_movement_dir * ivec2(background_movement_timer / 2 % bg_size.x), bg_size, ivec2(bg_size.x * levels[current_level_index].bg_index, 0));
+                DrawRect(ivec2(x, y) * bg_size - screen_size / 2 + vel * ivec2(background_movement_timer / 2 % bg_size.x), bg_size, ivec2(bg_size.x * levels[current_level_index].bg_index, 0));
             }
         }
 
@@ -1144,7 +1283,7 @@ struct World::State
             ivec2 cursor = -screen_size/2 + 4;
             for (char ch : str)
             {
-                DrawRect(cursor, glyph_size, {ivec2(glyph_size.x * (ch - '0'), 400), 0.5f});
+                DrawRect(cursor, glyph_size, ivec2(glyph_size.x * (ch - '0'), 400));
                 cursor.x += 8;
             }
         }
@@ -1159,7 +1298,7 @@ struct World::State
             if (frames[frame_index].player_is_under_this_frame)
                 break;
 
-            frames[frame_index].Render();
+            frames[frame_index].Render(num_remaining_keys);
         }
 
         { // Frame borders that are visible through other frames. Only doing this for non-transparent frames.
@@ -1218,7 +1357,7 @@ struct World::State
         // Frames above the player.
         for (; frame_index < frames.size(); frame_index++)
         {
-            frames[frame_index].Render();
+            frames[frame_index].Render(num_remaining_keys);
         }
 
 
