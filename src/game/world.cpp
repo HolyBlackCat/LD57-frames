@@ -6,12 +6,14 @@
 #include "audio/global_sound_loader.h"
 #include "main.h"
 
+#include <fmt/format.h>
 #include <SDL3/SDL_mouse.h>
 
 #include <cassert>
 #include <cmath>
 #include <deque>
 #include <random>
+#include <set>
 #include <string>
 
 static constexpr int tile_size = 16;
@@ -121,8 +123,8 @@ namespace Frames
         }),
         box(ivec2(10,0), {
             "-###-",
+            "-#-#-",
             "-#1#-",
-            "-###-",
             "#####",
         }),
         desert(ivec2(15,0), {
@@ -130,13 +132,27 @@ namespace Frames
             "---",
             "-1-",
             "###",
+        }),
+        bubbles(ivec2(18,0), {
+            "---------",
+            "---------",
+            "#-#######",
+            "#------1#",
+            "#########",
+            "---#2#---",
+            "---###---",
+        }),
+        vert_glass_tube(ivec2(15,4), {
+            "---",
+            "#-#",
+            "#-#",
+            "#-#",
         })
         ;
 }
 
 enum class SpawnedEntity
 {
-    none,
     player,
     exit,
 };
@@ -156,11 +172,7 @@ struct Frame
 
 
     // Which entity this frame can spawn at the `1` marker.
-    SpawnedEntity spawned_entity_type;
-
-    bool did_spawn_entity = false;
-    // Pixel offset relative to `pos` to the spawned entity.
-    ivec2 offset_to_spawned_entity;
+    std::vector<SpawnedEntity> spawned_entity_types;
 
 
     bool aabb_overlaps_player = false;
@@ -173,8 +185,8 @@ struct Frame
     std::optional<ivec2> exit_pos;
 
 
-    Frame(const FrameType &type, ivec2 pos, SpawnedEntity spawned_entity_type = SpawnedEntity::none)
-        : type(&type), pos(pos), spawned_entity_type(spawned_entity_type)
+    Frame(const FrameType &type, ivec2 pos, std::vector<SpawnedEntity> spawned_entity_types = {})
+        : type(&type), pos(pos), spawned_entity_types(std::move(spawned_entity_types))
     {}
 
     [[nodiscard]] ivec2 TopLeftCorner() const
@@ -272,22 +284,30 @@ struct Particle
 struct Level
 {
     int bg_index = 0;
+    ivec2 bg_movement_dir = ivec2(1, 0);
     std::vector<Frame> frames;
 };
 
 static const std::vector<Level> levels = {
     {
-        0,
+        0, ivec2(1,0),
         {
-            Frame(Frames::flower_island, ivec2(-50, 20), SpawnedEntity::player),
-            Frame(Frames::vortex, ivec2(70, -20), SpawnedEntity::exit),
+            Frame(Frames::flower_island, ivec2(-50, 20), {SpawnedEntity::player}),
+            Frame(Frames::vortex, ivec2(70, -20), {SpawnedEntity::exit}),
         }
     },
     {
-        1,
+        1, ivec2(1,0),
         {
-            Frame(Frames::desert, ivec2(-50, -20), SpawnedEntity::player),
-            Frame(Frames::box, ivec2(70, 20), SpawnedEntity::exit),
+            Frame(Frames::desert, ivec2(-50, -20), {SpawnedEntity::player}),
+            Frame(Frames::box, ivec2(70, 20), {SpawnedEntity::exit}),
+        }
+    },
+    {
+        2, ivec2(0,1),
+        {
+            Frame(Frames::bubbles, ivec2(-60,0), {SpawnedEntity::player, SpawnedEntity::exit}),
+            Frame(Frames::vert_glass_tube, ivec2(30, 0)),
         }
     }
 };
@@ -355,37 +375,39 @@ struct World::State
 
     void InitEntityFromSpecificFrame(Frame &frame)
     {
-        if (frame.spawned_entity_type != SpawnedEntity{})
+        char ch = '1';
+        for (SpawnedEntity e : frame.spawned_entity_types)
         {
-            if (!frame.did_spawn_entity)
-            {
-                for (int y = 0; y < frame.type->TileSize().y; y++) EM_NAMED_LOOP(outer)
-                for (int x = 0; x < frame.type->TileSize().x; x++)
-                {
-                    if (frame.type->tiles[std::size_t(y)][std::size_t(x)] == '1')
-                    {
-                        frame.did_spawn_entity = true;
-                        frame.offset_to_spawned_entity = frame.TopLeftCorner() + ivec2(x, y) * tile_size + tile_size / 2 - frame.pos;
-                        EM_BREAK(outer);
-                    }
-                }
+            ivec2 offset_to_spawned_entity;
 
-                if (!frame.did_spawn_entity)
-                    throw std::runtime_error("This frame wants to spawn an entity, but has no marker for it.");
+            bool found = false;
+
+            for (int y = 0; y < frame.type->TileSize().y; y++) EM_NAMED_LOOP(outer)
+            for (int x = 0; x < frame.type->TileSize().x; x++)
+            {
+                if (frame.type->tiles[std::size_t(y)][std::size_t(x)] == ch)
+                {
+                    offset_to_spawned_entity = frame.TopLeftCorner() + ivec2(x, y) * tile_size + tile_size / 2 - frame.pos;
+                    found = true;
+                    EM_BREAK(outer);
+                }
             }
 
-            switch (frame.spawned_entity_type)
+            if (!found)
+                throw std::runtime_error("This frame wants to spawn an entity, but has no marker for it.");
+
+            switch (e)
             {
-              case SpawnedEntity::none:
-                std::unreachable();
               case SpawnedEntity::player:
                 player.exists = true;
-                player.pos = frame.pos + frame.offset_to_spawned_entity;
+                player.pos = frame.pos + offset_to_spawned_entity;
                 break;
               case SpawnedEntity::exit:
-                frame.exit_pos = frame.offset_to_spawned_entity;
+                frame.exit_pos = offset_to_spawned_entity;
                 break;
             }
+
+            ch++;
         }
     }
 
@@ -656,8 +678,12 @@ struct World::State
                     }
                 }
 
-                if (!movement_started && frame.spawned_entity_type == SpawnedEntity::player && frame.did_spawn_entity)
+                if (!movement_started &&
+                    std::any_of(frame.spawned_entity_types.begin(), frame.spawned_entity_types.end(), [](SpawnedEntity e){return e == SpawnedEntity::player;})
+                )
+                {
                     no_movement_and_found_player_frame = true;
+                }
 
                 // Reset the "under frame" flag if no overlap.
                 if (!frame.aabb_overlaps_player)
@@ -670,15 +696,20 @@ struct World::State
         { // Player to frame entity interactions. This is before player movement, this looks better.
             if (movement_started && player.exists)
             {
-                for (Frame &frame : frames)
+                for (std::size_t i = frames.size(); i-- > 0;)
                 {
+                    Frame &frame = frames[i];
+
                     if (frame.player_is_under_this_frame)
-                        continue; // This disables the interactions.
+                        continue; // The frame is above the player, no interaction.
+
+                    if (!frame.WorldPixelIsInRect(player.pos))
+                        continue; //
 
                     // Exit?
                     if (frame.exit_pos)
                     {
-                        static constexpr ivec2 exit_hitbox_size(4);
+                        static constexpr ivec2 exit_hitbox_size(5);
 
                         ivec2 exit_world_pos = frame.pos + *frame.exit_pos;
 
@@ -691,6 +722,9 @@ struct World::State
                             winning_fade_out = true;
                         }
                     }
+
+                    // Only interacting with the topmost frame.
+                    break;
                 }
             }
         }
@@ -709,6 +743,8 @@ struct World::State
                 ;
 
             int hc = keys.right.is_down - keys.left.is_down;
+            if (!tut.dragged_at_least_once)
+                hc = 0; // Don't let the player move until they tried dragging something.
 
             // Horizontal control.
             if (hc)
@@ -802,7 +838,7 @@ struct World::State
             // Jumping.
             if (player.on_ground)
             {
-                if (keys.jump.IsPressed())
+                if (keys.jump.IsPressed() && tut.dragged_at_least_once)
                 {
                     movement_started = true;
 
@@ -1061,10 +1097,23 @@ struct World::State
         { // Background.
             static constexpr ivec2 bg_size(128);
             ivec2 count = (screen_size + bg_size - 1) / bg_size;
-            for (int y = 0; y < count.y; y++)
+            for (int y = -1; y < count.y; y++)
             for (int x = -1; x < count.x; x++)
             {
-                DrawRect(ivec2(x, y) * bg_size - screen_size / 2 + ivec2(background_movement_timer / 2 % bg_size.x, 0), bg_size, ivec2(bg_size.x * levels[current_level_index].bg_index, 0));
+                DrawRect(ivec2(x, y) * bg_size - screen_size / 2 + levels[current_level_index].bg_movement_dir * ivec2(background_movement_timer / 2 % bg_size.x), bg_size, ivec2(bg_size.x * levels[current_level_index].bg_index, 0));
+            }
+        }
+
+        { // Level number.
+            std::string str = fmt::format("{}", current_level_index + 1);
+
+            static constexpr ivec2 glyph_size(8, 16);
+
+            ivec2 cursor = -screen_size/2 + 4;
+            for (char ch : str)
+            {
+                DrawRect(cursor, glyph_size, {ivec2(glyph_size.x * (ch - '0'), 400), 0.5f});
+                cursor.x += 8;
             }
         }
 
