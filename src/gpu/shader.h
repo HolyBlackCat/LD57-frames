@@ -2,6 +2,7 @@
 
 #include "em/zstring_view.h"
 
+#include <cstdint>
 #include <span>
 
 

@@ -14,6 +14,10 @@ namespace em::Gpu
         {
             SDL_GPUDevice *device = nullptr;
             bool debug_mode_enabled = false;
+
+            // We set this to true for backends known to not do Vsync (currently only SwiftShader, the software Vulkan implementation
+            //   that we fall back to intentionally).
+            bool must_manually_limit_fps = false;
         };
         State state;
 
@@ -36,5 +40,6 @@ namespace em::Gpu
         [[nodiscard]] SDL_GPUDevice *Handle() {return state.device;}
 
         [[nodiscard]] bool DebugModeEnabled() const {return state.debug_mode_enabled;}
+        [[nodiscard]] bool MustManuallyLimitFps() const {return state.must_manually_limit_fps;}
     };
 }

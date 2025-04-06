@@ -51,6 +51,8 @@ namespace em::Gpu
 
                     // We don't check for errors here. We test if the handle is still null below.
                     state.device = SDL_CreateGPUDevice(SDL_ShaderCross_GetSPIRVShaderFormats(), state.debug_mode_enabled, nullptr);
+
+                    state.must_manually_limit_fps = true;
                 }
             }
             #else

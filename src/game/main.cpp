@@ -272,8 +272,13 @@ struct GameApp : App::Module
         tick_counter++;
     }
 
+
     App::Action Tick() override
     {
+        std::uint64_t frame_start_ticks = 0;
+        if (device.MustManuallyLimitFps())
+            frame_start_ticks = Clock::Time();
+
         Gpu::CommandBuffer cmdbuf(device);
         Gpu::Texture swapchain_tex = cmdbuf.WaitAndAcquireSwapchainTexture(window);
 
@@ -423,6 +428,17 @@ struct GameApp : App::Module
             vp.size.y = std::min(float(swapchain_tex.GetSize().y), vp.pos.y + vp.size.y) - vp.pos.y;
             rp_upscale2.SetViewport(vp);
             rp_upscale2.DrawPrimitives(3);
+        }
+
+
+        if (device.MustManuallyLimitFps())
+        {
+            static const double wanted_len = 1.f / SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay())->refresh_rate;
+
+            double cur_len = Clock::TicksToSeconds(Clock::Time() - frame_start_ticks) + 0.005f;
+
+            if (cur_len < wanted_len)
+                Clock::WaitSeconds(wanted_len - cur_len);
         }
 
         return App::Action::cont;

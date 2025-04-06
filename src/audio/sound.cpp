@@ -54,7 +54,7 @@ namespace em::Audio
                 callbacks.close_func = nullptr;
                 callbacks.tell_func = [](void *stream_ptr) -> long
                 {
-                    return SDL_TellIO((SDL_IOStream *)stream_ptr);
+                    return (long)SDL_TellIO((SDL_IOStream *)stream_ptr);
                 };
                 callbacks.seek_func = [](void *stream_ptr, std::int64_t offset, int mode) -> int
                 {
