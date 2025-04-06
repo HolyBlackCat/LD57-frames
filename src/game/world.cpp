@@ -28,9 +28,16 @@ static std::mt19937_64 rng(std::random_device{}());
     static std::uniform_real_distribution<float> dist(0, 1);
     return dist(rng);
 }
+
 [[nodiscard]] static float RandFloat11()
 {
     static std::uniform_real_distribution<float> dist(-1, 1);
+    return dist(rng);
+}
+
+[[nodiscard]] static float RandAngle()
+{
+    static std::uniform_real_distribution<float> dist(-std::numbers::pi_v<float>, std::numbers::pi_v<float>);
     return dist(rng);
 }
 
@@ -60,6 +67,7 @@ struct Keys
     Key left;
     Key right;
     Key jump;
+    Key reset;
 };
 static Keys keys;
 
@@ -212,6 +220,7 @@ struct Particle
 {
     fvec2 pos;
     fvec2 vel;
+    fvec2 acc;
 
     float damp = 0.01f;
 
@@ -223,44 +232,88 @@ struct Particle
     int remaining_life = 10;
 
     Particle() {}
-    Particle(fvec2 pos, fvec2 vel, float damp, fvec4 color, float size, int life)
-        : pos(pos), vel(vel), damp(damp), color(color), max_size(size), total_life(life), remaining_life(life)
+    Particle(fvec2 pos, fvec2 vel, fvec2 acc, float damp, fvec4 color, float size, int life)
+        : pos(pos), vel(vel), acc(acc), damp(damp), color(color), max_size(size), total_life(life), remaining_life(life)
     {}
 };
+
+
+
+
+struct Level
+{
+    int bg_index = 0;
+    std::vector<Frame> frames;
+};
+
+static const std::vector<Level> levels = {
+    {
+        0,
+        {
+            Frame(Frames::flower_island, ivec2(0,0), SpawnedEntity::player),
+            Frame(Frames::vortex, ivec2(100,0)),
+        }
+    }
+};
+
+
+struct Tutorial
+{
+    bool explaining_drag = true;
+    bool explaining_move = true;
+    bool explaining_reset = true;
+
+    float drag_timer = 0;
+    float move_timer = 0;
+    float reset_timer = 0;
+
+    bool dragged_at_least_once = false;
+};
+static Tutorial tut;
+
 
 struct World::State
 {
     std::vector<Frame> frames;
 
+    std::size_t current_level_index = 0;
 
-    bool player_exists = false;
-    ivec2 player_pos;
-    fvec2 player_vel;
-    fvec2 player_vel_comp;
-    bool player_on_ground = false;
-    bool player_on_ground_prev = false;
-    bool player_facing_left = false;
-    int player_movement_timer = 0;
-    bool player_holding_jump = false;
+
+    bool fading_out = false;
+    float fade = 1;
+
+
+    struct Player
+    {
+        bool exists = false;
+        bool exists_prev = false;
+
+        ivec2 pos;
+        fvec2 vel;
+        fvec2 vel_comp;
+        bool on_ground = false;
+        bool on_ground_prev = false;
+        bool facing_left = false;
+        int movement_timer = 0;
+        bool holding_jump = false;
+
+        int death_timer = 0;
+    };
+    Player player;
+
 
     bool movement_started = false;
 
     std::deque<Particle> particles;
 
+    ivec2 reset_button_size = ivec2(32);
+    ivec2 reset_button_pos = screen_size/2 - reset_button_size;
+    bool reset_button_hovered = false;
+    float reset_button_vis_timer = 0;
 
     State()
     {
-        frames.emplace_back(
-            Frames::flower_island,
-            ivec2(0,0),
-            SpawnedEntity::player
-        );
-
-        frames.emplace_back(
-            Frames::vortex,
-            ivec2(100,0)
-        );
-
+        frames = levels.at(current_level_index).frames;
         InitEntitiesFromFrames();
     }
 
@@ -290,8 +343,8 @@ struct World::State
               case SpawnedEntity::none:
                 std::unreachable();
               case SpawnedEntity::player:
-                player_exists = true;
-                player_pos = frame.pos + frame.offset_to_spawned_entity;
+                player.exists = true;
+                player.pos = frame.pos + frame.offset_to_spawned_entity;
                 break;
             }
         }
@@ -303,14 +356,57 @@ struct World::State
             InitEntityFromSpecificFrame(frame);
     }
 
+    void RestartLevel()
+    {
+        movement_started = false;
+        player = {};
+        InitEntitiesFromFrames();
+    }
 
     void Tick()
     {
         static constexpr ivec2 player_hitbox[] = {
-            ivec2( 3, 7),
+            ivec2(-4, -3),
+            ivec2(-3, -3),
+            ivec2(-2, -3),
+            ivec2(-1, -3),
+            ivec2( 0, -3),
+            ivec2( 1, -3),
+            ivec2( 2, -3),
+            ivec2( 3, -3),
+
             ivec2(-4, 7),
-            ivec2( 3,-3),
-            ivec2(-4,-3),
+            ivec2(-3, 7),
+            ivec2(-2, 7),
+            ivec2(-1, 7),
+            ivec2( 0, 7),
+            ivec2( 1, 7),
+            ivec2( 2, 7),
+            ivec2( 3, 7),
+
+            ivec2(-4, -3),
+            ivec2(-4, -2),
+            ivec2(-4, -1),
+            ivec2(-4,  0),
+            ivec2(-4,  1),
+            ivec2(-4,  2),
+            ivec2(-4,  3),
+            ivec2(-4,  4),
+            ivec2(-4,  5),
+            ivec2(-4,  6),
+            ivec2(-4,  7),
+
+            ivec2(3, -3),
+            ivec2(3, -2),
+            ivec2(3, -1),
+            ivec2(3,  0),
+            ivec2(3,  1),
+            ivec2(3,  2),
+            ivec2(3,  3),
+            ivec2(3,  4),
+            ivec2(3,  5),
+            ivec2(3,  6),
+            ivec2(3,  7),
         };
 
         { // Particles.
@@ -325,6 +421,44 @@ struct World::State
             }
         }
 
+        { // The reset button.
+            static constexpr float
+                vis_step = 0.05f;
+
+            // Visibility timer.
+            if (movement_started)
+            {
+                reset_button_vis_timer += vis_step;
+                if (reset_button_vis_timer > 1)
+                    reset_button_vis_timer = 1;
+            }
+            else
+            {
+                reset_button_vis_timer -= vis_step;
+                if (reset_button_vis_timer < 0)
+                    reset_button_vis_timer = 0;
+            }
+
+            // Hover check.
+            if (movement_started)
+            {
+                reset_button_hovered =
+                    mouse.pos.x >= reset_button_pos.x &&
+                    mouse.pos.y >= reset_button_pos.y &&
+                    mouse.pos.x < reset_button_pos.x + reset_button_size.x &&
+                    mouse.pos.y < reset_button_pos.y + reset_button_size.y;
+
+                if ((reset_button_hovered && mouse.IsPressed()) || keys.reset.IsPressed())
+                {
+                    player.exists = false; // Kill the player to reset.
+                }
+            }
+            else
+            {
+                reset_button_hovered = false;
+            }
+        }
+
 
         std::size_t hovered_frame_index = std::size_t(-1);
 
@@ -336,7 +470,7 @@ struct World::State
             while (i-- > 0)
             {
                 Frame &frame = frames[i];
-                if (!found && (frame.dragged || frame.WorldPixelIsInRect(mouse.pos)))
+                if (!found && !movement_started && (frame.dragged || (!reset_button_hovered && frame.WorldPixelIsInRect(mouse.pos))))
                 {
                     found = true;
                     frame.hovered = true;
@@ -356,9 +490,20 @@ struct World::State
             {
                 if (frame.hovered)
                 {
-                    frame.hover_time += step;
-                    if (frame.hover_time > 1)
-                        frame.hover_time = 1;
+                    float cap = frame.dragged ? 1.7f : 1;
+
+                    if (frame.hover_time < cap)
+                    {
+                        frame.hover_time += step;
+                        if (frame.hover_time > cap)
+                            frame.hover_time = cap;
+                    }
+                    else if (frame.hover_time > cap)
+                    {
+                        frame.hover_time -= step;
+                        if (frame.hover_time < cap)
+                            frame.hover_time = cap;
+                    }
                 }
                 else
                 {
@@ -383,10 +528,13 @@ struct World::State
                 frames.back().dragged = true;
 
                 frames.back().drag_offset_relative_to_mouse = frames.back().pos - mouse.pos;
+
+
+                tut.dragged_at_least_once = true;
             }
 
             // Finish drag.
-            if (!mouse.is_down && any_frame_dragged)
+            if ((!mouse.is_down || movement_started) && any_frame_dragged)
             {
                 frames.back().dragged = false;
             }
@@ -396,6 +544,17 @@ struct World::State
             {
                 frames.back().pos = mouse.pos + frames.back().drag_offset_relative_to_mouse;
 
+                // Clamp frame position.
+                ivec2 bound = screen_size / 2 - frames.back().PixelSize() / 2 - 8;
+                if (frames.back().pos.x < -bound.x)
+                    frames.back().pos.x = -bound.x;
+                else if (frames.back().pos.x > bound.x)
+                    frames.back().pos.x = bound.x;
+                if (frames.back().pos.y < -bound.y)
+                    frames.back().pos.y = -bound.y;
+                else if (frames.back().pos.y > bound.y)
+                    frames.back().pos.y = bound.y;
+
                 // Drag the entities with the frames.
                 if (!movement_started)
                     InitEntityFromSpecificFrame(frames.back());
@@ -403,17 +562,27 @@ struct World::State
         }
 
         { // Update AABB overlap flags for frames.
+            bool no_movement_and_found_player_frame = false;
             for (Frame &frame : frames)
             {
                 frame.aabb_overlaps_player = false;
+                if (!movement_started)
+                    frame.player_is_under_this_frame = false;
+
                 for (ivec2 point : player_hitbox)
                 {
-                    if (frame.WorldPixelIsInRect(player_pos + point))
+                    if (frame.WorldPixelIsInRect(player.pos + point))
                     {
                         frame.aabb_overlaps_player = true;
+
+                        if (no_movement_and_found_player_frame)
+                            frame.player_is_under_this_frame = true;
                         break;
                     }
                 }
+
+                if (!movement_started && frame.spawned_entity_type == SpawnedEntity::player && frame.did_spawn_entity)
+                    no_movement_and_found_player_frame = true;
 
                 // Reset the "under frame" flag if no overlap.
                 if (!frame.aabb_overlaps_player)
@@ -422,7 +591,7 @@ struct World::State
         }
 
         // Player.
-        if (player_exists)
+        if (player.exists)
         {
             static constexpr float
                 walk_speed = 1.5f,
@@ -440,25 +609,25 @@ struct World::State
             {
                 movement_started = true;
 
-                player_facing_left = hc < 0;
+                player.facing_left = hc < 0;
 
-                player_vel.x += hc * walk_acc;
-                if (std::abs(player_vel.x) > walk_speed)
-                    player_vel.x = player_vel.x > 0 ? walk_speed : -walk_speed;
+                player.vel.x += hc * walk_acc;
+                if (std::abs(player.vel.x) > walk_speed)
+                    player.vel.x = player.vel.x > 0 ? walk_speed : -walk_speed;
             }
             else
             {
-                bool flip = player_vel.x < 0;
+                bool flip = player.vel.x < 0;
                 if (flip)
-                    player_vel.x = -player_vel.x;
+                    player.vel.x = -player.vel.x;
 
-                if (player_vel.x > walk_dec)
-                    player_vel.x -= walk_dec;
+                if (player.vel.x > walk_dec)
+                    player.vel.x -= walk_dec;
                 else
-                    player_vel.x = 0;
+                    player.vel.x = 0;
 
                 if (flip)
-                    player_vel.x = -player_vel.x;
+                    player.vel.x = -player.vel.x;
             }
 
 
@@ -477,7 +646,7 @@ struct World::State
 
                         if (!found_aabb_overlap && !frame.player_is_under_this_frame)
                         {
-                            int r = frame.QueryWorldPixel(player_pos + point + offset);
+                            int r = frame.QueryWorldPixel(player.pos + point + offset);
 
                             if (r >= 0)
                                 found_aabb_overlap = true;
@@ -500,63 +669,86 @@ struct World::State
                 return ret;
             };
 
-            player_on_ground_prev = player_on_ground;
-            player_on_ground = SolidAtOffset(ivec2(0, 1), false);
+            player.on_ground_prev = player.on_ground;
+            player.on_ground = SolidAtOffset(ivec2(0, 1), false);
 
-            if (player_on_ground && !player_on_ground_prev && movement_started)
+            if (player.on_ground && !player.on_ground_prev && movement_started)
             {
-                audio.Play("landing"_sound, player_pos, 1, RandFloat11() * 0.3f);
+                audio.Play("landing"_sound, player.pos, 1, RandFloat11() * 0.3f);
 
                 for (int i = 0; i < 8; i++)
-                    particles.push_back(Particle(player_pos + ivec2(0,8) + fvec2(RandSign() * (2.f + 1.2f * RandFloat01()), RandFloat11()), fvec2(RandFloat11() * 0.7f, RandFloat01() * -0.14f), 0.01f, fvec3(0.6f + RandFloat01() * 0.2f).to_vec4(1), 3, 30));
+                {
+                    particles.push_back(Particle(
+                        player.pos + ivec2(0,8) + fvec2(RandSign() * (2.f + 1.2f * RandFloat01()), RandFloat11()),
+                        fvec2(RandFloat11() * 0.7f, RandFloat01() * -0.14f),
+                        fvec2(0,-0.01f),
+                        0.01f,
+                        fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(0.7f),
+                        3,
+                        30
+                    ));
+                }
             }
 
 
             // Jumping.
-            if (player_on_ground)
+            if (player.on_ground)
             {
                 if (keys.jump.IsPressed())
                 {
                     movement_started = true;
 
-                    player_holding_jump = true;
+                    player.holding_jump = true;
 
-                    player_vel.y = -3;
-                    player_vel_comp.y = 0;
+                    player.vel.y = -3;
+                    player.vel_comp.y = 0;
 
-                    audio.Play("jump"_sound, player_pos, 1, RandFloat11() * 0.3f);
+                    audio.Play("jump"_sound, player.pos, 1, RandFloat11() * 0.3f);
 
-                    for (int i = 0; i < 8; i++)
-                        particles.push_back(Particle(player_pos + ivec2(0,8) + fvec2(RandFloat11() * 4, RandFloat11()), fvec2(RandFloat11() * 0.2f, RandFloat01() * -0.48f), 0.01f, fvec3(0.6f + RandFloat01() * 0.2f).to_vec4(1), 3, 30));
+                    for (int i = 0; i < 4; i++)
+                    {
+                        particles.push_back(Particle(
+                            player.pos + ivec2(0,7) + fvec2(RandFloat11() * 4, RandFloat01()),
+                            fvec2(RandFloat11() * 0.2f, RandFloat01() * -0.48f),
+                            fvec2(0,-0.01f),
+                            0.01f,
+                            fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(0.7f),
+                            3,
+                            30
+                        ));
+                    }
                 }
                 else
                 {
-                    player_holding_jump = false;
+                    player.holding_jump = false;
 
-                    if (player_vel.y > 0)
+                    if (player.vel.y > 0)
                     {
-                        player_vel.y = 0;
-                        if (player_vel_comp.y > 0)
-                            player_vel_comp.y = 0;
+                        player.vel.y = 0;
+                        if (player.vel_comp.y > 0)
+                            player.vel_comp.y = 0;
                     }
                 }
             }
             else
             {
-                if (!keys.jump.is_down || player_vel.y > 0)
-                    player_holding_jump = false;
+                if (!keys.jump.is_down || player.vel.y > 0)
+                    player.holding_jump = false;
 
-                player_vel.y += player_holding_jump ? gravity : gravity_lowjump;
-                if (player_vel.y > max_fall_speed)
-                    player_vel.y = max_fall_speed;
+                if (movement_started)
+                {
+                    player.vel.y += player.holding_jump ? gravity : gravity_lowjump;
+                    if (player.vel.y > max_fall_speed)
+                        player.vel.y = max_fall_speed;
+                }
             }
 
 
             { // Update position.
-                fvec2 vel_with_comp = player_vel + player_vel_comp;
+                fvec2 vel_with_comp = player.vel + player.vel_comp;
                 ivec2 int_vel = vel_with_comp.map(EM_FUNC(std::round)).to<int>();
-                player_vel_comp = vel_with_comp - int_vel;
-                player_vel_comp *= 0.98f;
+                player.vel_comp = vel_with_comp - int_vel;
+                player.vel_comp *= 0.98f;
 
                 bool moved_x = false;
 
@@ -572,18 +764,18 @@ struct World::State
 
                         if (SolidAtOffset(offset, true))
                         {
-                            if (int_vel[vert] * player_vel[vert] > 0)
+                            if (int_vel[vert] * player.vel[vert] > 0)
                             {
-                                player_vel[vert] = 0;
-                                if (int_vel[vert] * player_vel_comp[vert] > 0)
-                                    player_vel_comp[vert] = 0;
+                                player.vel[vert] = 0;
+                                if (int_vel[vert] * player.vel_comp[vert] > 0)
+                                    player.vel_comp[vert] = 0;
                             }
                             int_vel[vert] = 0;
                         }
                         else
                         {
                             int_vel -= offset;
-                            player_pos += offset;
+                            player.pos += offset;
 
                             if (!vert)
                                 moved_x = true;
@@ -591,13 +783,153 @@ struct World::State
                     }
                 }
 
-                player_pos += int_vel;
+                player.pos += int_vel;
 
                 if (moved_x)
-                    player_movement_timer++;
+                    player.movement_timer++;
                 else
-                    player_movement_timer = 0;
+                    player.movement_timer = 0;
             }
+
+
+            // Hide tutorial messages once we start moving.
+            if (movement_started)
+            {
+                tut.explaining_move = false;
+                tut.explaining_drag = false; // Let's do this here.
+            }
+        }
+
+        // Player death conditions.
+        if (player.exists)
+        {
+            // Falling out of bounds.
+            // Jumping above the bounds is allowed though.
+            if (player.exists && (player.pos.x <= -screen_size.x / 2 || player.pos.x > screen_size.x / 2 || player.pos.y > screen_size.y / 2))
+            {
+                player.exists = false;
+            }
+        }
+
+        // Player death.
+        if (!player.exists && player.exists_prev)
+        {
+            audio.Play("death"_sound, player.pos);
+
+            // Do this on any death, not only on clicking reset.
+            tut.explaining_reset = false;
+
+            for (int i = 0; i < 64; i++)
+            {
+                float a1 = RandAngle();
+                float a2 = RandAngle();
+
+                particles.push_back(Particle(
+                    player.pos + fvec2(std::cos(a1), std::sin(a1)) * (RandFloat01() * 6),
+                    fvec2(std::cos(a2), std::sin(a2)) * (RandFloat01() * 2.f),
+                    fvec2(),
+                    0.01f,
+                    fvec3(0.6f + RandFloat01() * 0.4f).to_vec4(0.5f + RandFloat01() * 0.5f),
+                    4,
+                    90
+                ));
+            }
+        }
+        player.exists_prev = player.exists;
+
+        { // Restarting on death.
+            if (!player.exists)
+            {
+                player.death_timer++;
+                if (player.death_timer > 45)
+                {
+                    audio.Play("respawn"_sound, 1, RandFloat11() * 0.2f);
+                    RestartLevel();
+
+                    for (int i = 0; i < 16; i++)
+                    {
+                        float a1 = RandAngle();
+
+                        particles.push_back(Particle(
+                            player.pos + fvec2(std::cos(a1), std::sin(a1)) * (3 + RandFloat01()),
+                            fvec2(std::cos(a1), std::sin(a1)) * (1),
+                            fvec2(),
+                            0.05f,
+                            fvec3(0.7f + RandFloat01() * 0.2f).to_vec4(1),
+                            3,
+                            20
+                        ));
+                    }
+                }
+            }
+        }
+
+
+        { // Fade.
+            static constexpr float fade_step = 0.03f;
+
+            if (fading_out)
+            {
+                fade += fade_step;
+                if (fade > 1)
+                    fade = 1;
+            }
+            else
+            {
+                fade -= fade_step;
+                if (fade < 0)
+                    fade = 0;
+            }
+        }
+
+
+        { // Tutorial texts.
+            constexpr float step = 0.005f;
+
+            if (tut.explaining_drag)
+            {
+                tut.drag_timer += step;
+                if (tut.drag_timer > 1)
+                    tut.drag_timer = 1;
+            }
+            else
+            {
+                tut.drag_timer -= step;
+                if (tut.drag_timer < 0)
+                    tut.drag_timer = 0;
+            }
+
+            if (tut.explaining_move && tut.dragged_at_least_once)
+            {
+                tut.move_timer += step;
+                if (tut.move_timer > 1)
+                    tut.move_timer = 1;
+            }
+            else
+            {
+                tut.move_timer -= step;
+                if (tut.move_timer < 0)
+                    tut.move_timer = 0;
+            }
+
+            if (tut.explaining_reset && movement_started)
+            {
+                tut.reset_timer += step;
+                if (tut.reset_timer > 1)
+                    tut.reset_timer = 1;
+            }
+            else
+            {
+                tut.reset_timer -= step;
+                if (tut.reset_timer < 0)
+                    tut.reset_timer = 0;
+            }
+        }
+
+        { // Hints.
+            // If the player keeps clicking after starting to move, show them the tutorial again.
+            if (movement_started && !reset_button_hovered && mouse.IsPressed())
+                tut.explaining_reset = true;
         }
     }
 
@@ -627,36 +959,36 @@ struct World::State
         }
 
         // Player.
-        if (player_exists)
+        if (player.exists)
         {
             static constexpr int player_sprite_size = 16;
 
             int pl_state = 0;
             int pl_frame = 0;
-            if (player_on_ground)
+            if (player.on_ground)
             {
-                if (player_movement_timer > 0)
+                if (player.movement_timer > 0)
                 {
                     pl_state = 1;
-                    pl_frame = player_movement_timer / 3 % 4;
+                    pl_frame = player.movement_timer / 3 % 4;
                 }
             }
             else
             {
                 pl_state = 2;
-                if (player_vel.y < -1)
+                if (player.vel.y < -1)
                     pl_frame = 0;
-                else if (player_vel.y < -0.5f)
+                else if (player.vel.y < -0.5f)
                     pl_frame = 1;
-                else if (player_vel.y < 0)
+                else if (player.vel.y < 0)
                     pl_frame = 2;
-                else if (player_vel.y < 0.5f)
+                else if (player.vel.y < 0.5f)
                     pl_frame = 3;
                 else
                     pl_frame = 4;
             }
 
-            DrawRect(player_pos - player_sprite_size / 2 + ivec2(0,2), ivec2(player_sprite_size), {ivec2(0, 240) + ivec2(pl_frame, pl_state) * player_sprite_size, 1, 1, player_facing_left});
+            DrawRect(player.pos - player_sprite_size / 2 + ivec2(0,2), ivec2(player_sprite_size), {ivec2(0, 240) + ivec2(pl_frame, pl_state) * player_sprite_size, 1, 1, player.facing_left});
 
         }
 
@@ -675,6 +1007,34 @@ struct World::State
         for (; frame_index < frames.size(); frame_index++)
         {
             frames[frame_index].Render();
+        }
+
+
+        { // The tutorial texts.
+            static constexpr ivec2 text_size(192, 16);
+
+            auto MapTimer = [&](float t)
+            {
+                return std::clamp(t * 3 - 1, 0.f, 1.f);
+            };
+
+            if (float t = MapTimer(tut.drag_timer); t > 0.001f)
+                DrawRect(ivec2(-text_size.x / 2, screen_size.y / 2 - text_size.y) - ivec2(0, text_size.y * 2), text_size, {ivec2(0, 352 + text_size.y * 0), t});
+            if (float t = MapTimer(tut.move_timer); t > 0.001f)
+                DrawRect(ivec2(-text_size.x / 2, screen_size.y / 2 - text_size.y) - ivec2(0, text_size.y * 1), text_size, {ivec2(0, 352 + text_size.y * 1), t});
+            if (float t = MapTimer(tut.reset_timer); t > 0.001f)
+                DrawRect(ivec2(-text_size.x / 2, screen_size.y / 2 - text_size.y) - ivec2(0, text_size.y * 0), text_size, {ivec2(0, 352 + text_size.y * 2), t});
+        }
+
+        // The reset button.
+        if (movement_started)
+        {
+            DrawRect(reset_button_pos, reset_button_size, {ivec2(reset_button_size.x * reset_button_hovered, 320), reset_button_vis_timer});
+        }
+
+        { // Fade.
+            if (fade > 0.001f)
+                DrawRect(-screen_size / 2, screen_size, fvec4(0,0,0,fade));
         }
     }
 };
@@ -704,10 +1064,13 @@ void World::Tick()
         keys.left .is_down_prev = keys.left .is_down;
         keys.right.is_down_prev = keys.right.is_down;
         keys.jump .is_down_prev = keys.jump .is_down;
+        keys.reset.is_down_prev = keys.reset.is_down;
 
-        keys.left.is_down  = held_keys[SDL_SCANCODE_LEFT ] || held_keys[SDL_SCANCODE_A];
+        keys.left .is_down = held_keys[SDL_SCANCODE_LEFT ] || held_keys[SDL_SCANCODE_A];
         keys.right.is_down = held_keys[SDL_SCANCODE_RIGHT] || held_keys[SDL_SCANCODE_D];
-        keys.jump.is_down  = held_keys[SDL_SCANCODE_UP   ] || held_keys[SDL_SCANCODE_W] || held_keys[SDL_SCANCODE_SPACE] || held_keys[SDL_SCANCODE_Z] || held_keys[SDL_SCANCODE_J];
+        keys.jump .is_down = held_keys[SDL_SCANCODE_UP   ] || held_keys[SDL_SCANCODE_W] || held_keys[SDL_SCANCODE_SPACE] || held_keys[SDL_SCANCODE_Z] || held_keys[SDL_SCANCODE_J];
+
+        keys.reset.is_down = held_keys[SDL_SCANCODE_R] || held_keys[SDL_SCANCODE_ESCAPE];
     }
 
     state->Tick();
