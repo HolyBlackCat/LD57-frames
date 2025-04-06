@@ -10,9 +10,30 @@
 
 #include <cassert>
 #include <cmath>
+#include <deque>
+#include <random>
 #include <string>
 
 static constexpr int tile_size = 16;
+
+static std::mt19937_64 rng(std::random_device{}());
+
+[[nodiscard]] static int RandSign()
+{
+    return rng() % 2 ? 1 : -1;
+}
+
+[[nodiscard]] static float RandFloat01()
+{
+    static std::uniform_real_distribution<float> dist(0, 1);
+    return dist(rng);
+}
+[[nodiscard]] static float RandFloat11()
+{
+    static std::uniform_real_distribution<float> dist(-1, 1);
+    return dist(rng);
+}
+
 
 struct Mouse
 {
@@ -187,6 +208,26 @@ struct Frame
     }
 };
 
+struct Particle
+{
+    fvec2 pos;
+    fvec2 vel;
+
+    float damp = 0.01f;
+
+    fvec4 color;
+
+    float max_size = 0;
+
+    int total_life = 10;
+    int remaining_life = 10;
+
+    Particle() {}
+    Particle(fvec2 pos, fvec2 vel, float damp, fvec4 color, float size, int life)
+        : pos(pos), vel(vel), damp(damp), color(color), max_size(size), total_life(life), remaining_life(life)
+    {}
+};
+
 struct World::State
 {
     std::vector<Frame> frames;
@@ -200,8 +241,11 @@ struct World::State
     bool player_on_ground_prev = false;
     bool player_facing_left = false;
     int player_movement_timer = 0;
+    bool player_holding_jump = false;
 
     bool movement_started = false;
+
+    std::deque<Particle> particles;
 
 
     State()
@@ -268,6 +312,18 @@ struct World::State
             ivec2( 3,-3),
             ivec2(-4,-3),
         };
+
+        { // Particles.
+            // Remove dead particles.
+            std::erase_if(particles, [](const Particle &part){return part.remaining_life <= 0;});
+
+            for (Particle &part : particles)
+            {
+                part.pos += part.vel;
+                part.vel *= 1.f - part.damp;
+                part.remaining_life--;
+            }
+        }
 
 
         std::size_t hovered_frame_index = std::size_t(-1);
@@ -373,6 +429,7 @@ struct World::State
                 walk_acc = 0.4f,
                 walk_dec = 0.4f,
                 gravity = 0.14f,
+                gravity_lowjump = 0.24f,
                 max_fall_speed = 4
                 ;
 
@@ -447,22 +504,35 @@ struct World::State
             player_on_ground = SolidAtOffset(ivec2(0, 1), false);
 
             if (player_on_ground && !player_on_ground_prev && movement_started)
-                audio.Play("landing"_sound, player_pos);
+            {
+                audio.Play("landing"_sound, player_pos, 1, RandFloat11() * 0.3f);
+
+                for (int i = 0; i < 8; i++)
+                    particles.push_back(Particle(player_pos + ivec2(0,8) + fvec2(RandSign() * (2.f + 1.2f * RandFloat01()), RandFloat11()), fvec2(RandFloat11() * 0.7f, RandFloat01() * -0.14f), 0.01f, fvec3(0.6f + RandFloat01() * 0.2f).to_vec4(1), 3, 30));
+            }
 
 
+            // Jumping.
             if (player_on_ground)
             {
                 if (keys.jump.IsPressed())
                 {
                     movement_started = true;
 
+                    player_holding_jump = true;
+
                     player_vel.y = -3;
                     player_vel_comp.y = 0;
 
-                    audio.Play("jump"_sound, player_pos);
+                    audio.Play("jump"_sound, player_pos, 1, RandFloat11() * 0.3f);
+
+                    for (int i = 0; i < 8; i++)
+                        particles.push_back(Particle(player_pos + ivec2(0,8) + fvec2(RandFloat11() * 4, RandFloat11()), fvec2(RandFloat11() * 0.2f, RandFloat01() * -0.48f), 0.01f, fvec3(0.6f + RandFloat01() * 0.2f).to_vec4(1), 3, 30));
                 }
                 else
                 {
+                    player_holding_jump = false;
+
                     if (player_vel.y > 0)
                     {
                         player_vel.y = 0;
@@ -473,7 +543,10 @@ struct World::State
             }
             else
             {
-                player_vel.y += gravity;
+                if (!keys.jump.is_down || player_vel.y > 0)
+                    player_holding_jump = false;
+
+                player_vel.y += player_holding_jump ? gravity : gravity_lowjump;
                 if (player_vel.y > max_fall_speed)
                     player_vel.y = max_fall_speed;
             }
@@ -585,6 +658,17 @@ struct World::State
 
             DrawRect(player_pos - player_sprite_size / 2 + ivec2(0,2), ivec2(player_sprite_size), {ivec2(0, 240) + ivec2(pl_frame, pl_state) * player_sprite_size, 1, 1, player_facing_left});
 
+        }
+
+        { // Particles.
+            for (const Particle &part : particles)
+            {
+                int size = (int)std::round(part.max_size * part.remaining_life / part.total_life);
+
+                ivec2 corner = (part.pos - size / 2).map(EM_FUNC(std::round)).to<int>();
+
+                DrawRect(corner, ivec2(size), part.color);
+            }
         }
 
         // Frames above the player.
