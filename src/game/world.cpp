@@ -122,7 +122,7 @@ namespace Frames
         }),
         box(ivec2(10,0), {
             "-###-",
-            "-#-#-",
+            "-#2#-",
             "-#1#-",
             "#####",
         }),
@@ -165,7 +165,7 @@ namespace Frames
         coil(ivec2(21,7), {
             "---",
             "###",
-            "#-#",
+            "#1#",
         }),
         snek(ivec2(27,8), {
             "#1###3#",
@@ -178,6 +178,24 @@ namespace Frames
         stars(ivec2(19,7), {
             "--",
             "--",
+        }),
+        clamp(ivec2(21,10), {
+            "######",
+            "----1#",
+            "-#####",
+        }),
+        hole(ivec2(34,0), {
+            "#-#",
+            "#-#",
+            "#-#",
+            "#-#",
+            "#1#",
+            "###",
+        }),
+        cat(ivec2(18,9), {
+            "1--",
+            "#--",
+            "##-",
         })
         ;
 }
@@ -353,7 +371,7 @@ static const std::vector<Level> levels = {
         {
             Frame(Frames::stone_wall, ivec2(50,0), {SpawnedEntity::player, SpawnedEntity::exit}),
             Frame(Frames::chimney, ivec2(-50, -40)),
-            Frame(Frames::coil, ivec2(-50, 40)),
+            Frame(Frames::coil, ivec2(-50, 40), {SpawnedEntity::key}),
         }
     },
     {
@@ -369,6 +387,15 @@ static const std::vector<Level> levels = {
             Frame(Frames::snek, ivec2(0, 40), {SpawnedEntity::player, SpawnedEntity::key, SpawnedEntity::exit}),
             Frame(Frames::staff, ivec2(-30, -40)),
             Frame(Frames::stars, ivec2(60, -40)),
+        }
+    },
+    {
+        5, ivec2(1,0),
+        {
+            Frame(Frames::box, ivec2(-60, -30), {SpawnedEntity::player, SpawnedEntity::exit}),
+            Frame(Frames::clamp, ivec2(-60, 40), {SpawnedEntity::key}),
+            Frame(Frames::hole, ivec2(40, 0), {SpawnedEntity::key}),
+            Frame(Frames::cat, ivec2(120, 0), {SpawnedEntity::key}),
         }
     },
 };
