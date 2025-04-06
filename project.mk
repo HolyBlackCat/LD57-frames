@@ -50,7 +50,7 @@ endif
 # The common PCH rules for all projects.
 # override _pch_rules := src/game/*->src/game/master.hpp
 
-$(call Project,exe,imp-re)
+$(call Project,exe,frames)
 $(call ProjectSetting,source_dirs,src)
 # $(call ProjectSetting,pch,$(_pch_rules))
 $(call ProjectSetting,libs,*)
@@ -179,12 +179,12 @@ $(call Library,stb,https://github.com/nothings/stb/archive/f0569113c93ad095470c5
 
 
 
-$(call Library,ogg,https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz) # Only serves as a dependency for `libvorbis`.
-  # When built with CMake on MinGW, ogg/vorbis can't decide whether to prefix the libraries with `lib` or not.
-  # The resulting executable doesn't find libraries because of this inconsistency.
-  $(call LibrarySetting,build_system,configure_make)
+# $(call Library,ogg,https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz) # Only serves as a dependency for `libvorbis`.
+#   # When built with CMake on MinGW, ogg/vorbis can't decide whether to prefix the libraries with `lib` or not.
+#   # The resulting executable doesn't find libraries because of this inconsistency.
+#   $(call LibrarySetting,build_system,configure_make)
 
-$(call Library,vorbis,https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz)
-  $(call LibrarySetting,deps,ogg)
-  # See ogg for why we use configure+make.
-  $(call LibrarySetting,build_system,configure_make)
+# $(call Library,vorbis,https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz)
+#   $(call LibrarySetting,deps,ogg)
+#   # See ogg for why we use configure+make.
+#   $(call LibrarySetting,build_system,configure_make)

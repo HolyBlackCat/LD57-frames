@@ -57,7 +57,7 @@
         {
             "label": "▷ Game",
             "type": "shell",
-            "command": "make remember APP=imp-re",
+            "command": "make remember APP=frames",
             "presentation": {"echo": true, "reveal": "always", "focus": false, "panel": "shared", "showReuseMessage": false, "clear": true},
         },
         {

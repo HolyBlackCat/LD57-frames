@@ -1,3 +1,3 @@
 MODE := release
-APP := imp-re
+APP := frames
 ARGS :=
