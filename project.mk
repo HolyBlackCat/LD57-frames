@@ -77,7 +77,7 @@ assets/%.frag.spv: assets/%.frag.glsl
 # On Windows, install following for SDL3:
 #   pacman -S --needed mingw-w64-ucrt-x86_64-libiconv mingw-w64-ucrt-x86_64-vulkan
 # Additionally, following on Windows hosts as opposed to Quasi-MSYS2:
-#   pacman -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf
+#   pacman -S --needed mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-pkgconf make
 # Thoses lists are from https://packages.msys2.org/packages/mingw-w64-x86_64-sdl3 (minus gcc-libs).
 # Last updated for MSYS2 SDL 3.2.8-1.
 
